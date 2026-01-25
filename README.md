@@ -2,8 +2,8 @@
 
 ## Executive Summary (Still under construction)
 
-I have successfully transformed the `mini-rag` academic codebase into a **production-grade SaaS architecture** for German language learning. The implementation addresses all critical issues identified in the technical audit and establishes a solid foundation for scaling.
-
+I'm working to build a **production-grade SaaS architecture** for German language learning. The implementation establishes a solid foundation for scaling. Special Thank for Engineer: Abu Bakr Soliman, MSc, for guiding me through the entire pipeline.
+ 
 ---
 
 ## What Was Built
