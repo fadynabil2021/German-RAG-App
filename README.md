@@ -37,7 +37,7 @@ A production-grade, AI-powered German language learning platform leveraging **Re
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 The project follows **Domain-Driven Design (DDD)** principles for clear separation of concerns and scalability.
 
@@ -56,7 +56,7 @@ The project follows **Domain-Driven Design (DDD)** principles for clear separati
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - **Python 3.10+** (Conda recommended)
@@ -148,13 +148,13 @@ Contributions are welcome! Please follow these steps:
 
 ---
 
-## 📜 License
+## License
 
 Distributed under the **Apache License 2.0**. See `LICENSE` for more information.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [FastAPI](https://fastapi.tiangolo.com/) for the high-performance backend.
 - [Next.js](https://nextjs.org/) for the modern frontend experience.
