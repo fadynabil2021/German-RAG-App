@@ -4,6 +4,9 @@ from sqlalchemy.orm import sessionmaker
 from stores.llm.LLMProviderFactory import LLMProviderFactory
 from stores.vectordb.VectorDBProviderFactory import VectorDBProviderFactory
 from infrastructure.llm.async_openai_provider import AsyncOpenAIProvider
+from stores.llm.templates.template_parser import TemplateParser
+from domains.tutor.service import TutorService
+from stores.llm.semantic_cache import SemanticCache
 
 class Container:
     """Dependency Injection Container - Singleton pattern."""
@@ -46,12 +49,37 @@ class Container:
             db_client=self.db_session_factory
         )
         
+        # LLM Cache
+        self.llm_cache = SemanticCache(redis_url=self.settings.CELERY_RESULT_BACKEND)
+
         # NEW: Async LLM Provider (P0 Fix for blocking I/O)
-        self.async_llm_provider = AsyncOpenAIProvider(self.settings)
+        self.async_llm_provider = AsyncOpenAIProvider(
+            config=self.settings,
+            cache=self.llm_cache
+        )
         self.async_llm_provider.set_generation_model(self.settings.GENERATION_MODEL_ID)
         self.async_llm_provider.set_embedding_model(
             self.settings.EMBEDDING_MODEL_ID,
             self.settings.EMBEDDING_MODEL_SIZE
+        )
+        
+        # Template Parser
+        self.template_parser = TemplateParser(
+            language=self.settings.PRIMARY_LANG,
+            default_language=self.settings.DEFAULT_LANG,
+        )
+
+        # Vector DB Client
+        self.vectordb_client = self.vectordb_provider_factory.create(
+            provider=self.settings.VECTOR_DB_BACKEND
+        )
+        
+        # Domain Services
+        self.tutor_service = TutorService(
+            llm_provider=self.async_llm_provider,
+            vectordb_client=self.vectordb_client,
+            embedding_client=self.async_llm_provider,
+            template_parser=self.template_parser
         )
         
         self._initialized = True

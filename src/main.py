@@ -1,10 +1,14 @@
 from fastapi import FastAPI
-from routes import base, data, nlp
+from routes import base, data, nlp, admin, auth
 from core.container import container
 from utils.metrics import setup_metrics
 from stores.llm.templates.template_parser import TemplateParser
+from security.rate_limit import RateLimitMiddleware
 
 app = FastAPI()
+
+# Add Rate Limiting Middleware
+app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
 
 # Setup Prometheus metrics
 setup_metrics(app)
@@ -14,12 +18,12 @@ async def startup_span():
     app.db_engine = container.db_engine
     app.db_client = container.db_session_factory
 
-    # Generation client
+    # Generation client (Legacy)
     app.generation_client = container.llm_provider_factory.create(provider=container.settings.GENERATION_BACKEND)
     if app.generation_client:
         app.generation_client.set_generation_model(model_id = container.settings.GENERATION_MODEL_ID)
 
-    # Embedding client
+    # Embedding client (Legacy)
     app.embedding_client = container.llm_provider_factory.create(provider=container.settings.EMBEDDING_BACKEND)
     if app.embedding_client:
         app.embedding_client.set_embedding_model(
@@ -27,16 +31,14 @@ async def startup_span():
             embedding_size=container.settings.EMBEDDING_MODEL_SIZE
         )
     
-    # Vector db client
-    app.vectordb_client = container.vectordb_provider_factory.create(
-        provider=container.settings.VECTOR_DB_BACKEND
-    )
+    # Vector db client - Use the one from container and connect
+    app.vectordb_client = container.vectordb_client
     await app.vectordb_client.connect()
 
-    app.template_parser = TemplateParser(
-        language=container.settings.PRIMARY_LANG,
-        default_language=container.settings.DEFAULT_LANG,
-    )
+    app.template_parser = container.template_parser
+    
+    # Domain Services
+    app.tutor_service = container.tutor_service
 
 
 async def shutdown_span():
@@ -48,3 +50,5 @@ app.add_event_handler("shutdown", shutdown_span)
 app.include_router(base.base_router)
 app.include_router(data.data_router)
 app.include_router(nlp.nlp_router)
+app.include_router(admin.admin_router)
+app.include_router(auth.auth_router)

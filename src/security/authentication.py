@@ -8,6 +8,7 @@ from sqlalchemy import select
 from helpers.config import get_settings
 from models.db_schemes import User
 from core.container import container
+from domains.identity.repository import UserRepository
 
 settings = get_settings()
 
@@ -45,8 +46,19 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         raise credentials_exception
     
     async with container.db_session_factory() as session:
-        result = await session.execute(select(User).where(User.email == email))
-        user = result.scalars().first()
+        user_repo = UserRepository(session)
+        user = await user_repo.get_by_email(email)
         if user is None:
             raise credentials_exception
         return user
+
+def requires_role(allowed_roles: list):
+    """Decorator to enforce role-based access control."""
+    async def role_checker(current_user: User = Depends(get_current_user)):
+        if current_user.role not in allowed_roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Operation not permitted for your role"
+            )
+        return current_user
+    return role_checker

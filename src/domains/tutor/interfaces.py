@@ -17,6 +17,28 @@ class IRAGService(ABC):
     """Interface for RAG-based tutoring service."""
     
     @abstractmethod
+    async def index_chunks(
+        self,
+        project_id: int,
+        texts: List[str],
+        metadata: List[Dict[str, Any]],
+        record_ids: List[int],
+        do_reset: bool = False
+    ) -> bool:
+        """Index document chunks into vector database."""
+        pass
+        
+    @abstractmethod
+    async def get_collection_info(self, project_id: int) -> Dict[str, Any]:
+        """Get information about a project's vector collection."""
+        pass
+
+    @abstractmethod
+    async def reset_collection(self, project_id: int) -> bool:
+        """Delete and recreate a project's vector collection."""
+        pass
+
+    @abstractmethod
     async def tutor_response(
         self, 
         query: str, 
@@ -26,15 +48,6 @@ class IRAGService(ABC):
     ) -> str:
         """
         Generates a pedagogical response based on user level and mode.
-        
-        Args:
-            query: User's question
-            context: Retrieved document chunks
-            level: German proficiency level (A1-C2)
-            mode: Tutoring interaction mode
-            
-        Returns:
-            AI-generated tutoring response
         """
         pass
     
@@ -47,13 +60,5 @@ class IRAGService(ABC):
     ) -> List[Dict[str, Any]]:
         """
         Retrieve relevant context from the vector database.
-        
-        Args:
-            query: Search query
-            project_id: Project to search within
-            limit: Maximum number of results
-            
-        Returns:
-            List of retrieved document chunks with metadata
         """
         pass

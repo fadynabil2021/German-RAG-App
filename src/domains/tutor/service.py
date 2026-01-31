@@ -29,6 +29,54 @@ class TutorService(IRAGService):
         """Generate collection name for project."""
         return f"collection_{self.vectordb_client.default_vector_size}_{project_id}".strip()
     
+    async def index_chunks(
+        self,
+        project_id: int,
+        texts: List[str],
+        metadata: List[Dict[str, Any]],
+        record_ids: List[int],
+        do_reset: bool = False
+    ) -> bool:
+        """Index document chunks into vector database."""
+        try:
+            collection_name = self.create_collection_name(project_id)
+            
+            # Generate embeddings ASYNC
+            vectors = await self.embedding_client.embed_text(
+                text=texts,
+                document_type=DocumentTypeEnum.DOCUMENT.value
+            )
+            
+            # Create collection if needed
+            await self.vectordb_client.create_collection(
+                collection_name=collection_name,
+                embedding_size=self.embedding_client.embedding_size,
+                do_reset=do_reset,
+            )
+            
+            # Insert into vector db
+            await self.vectordb_client.insert_many(
+                collection_name=collection_name,
+                texts=texts,
+                metadata=metadata,
+                vectors=vectors,
+                record_ids=record_ids,
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error indexing chunks: {e}")
+            return False
+
+    async def get_collection_info(self, project_id: int) -> Dict[str, Any]:
+        """Get information about a project's vector collection."""
+        collection_name = self.create_collection_name(project_id)
+        return await self.vectordb_client.get_collection_info(collection_name=collection_name)
+
+    async def reset_collection(self, project_id: int) -> bool:
+        """Delete and recreate a project's vector collection."""
+        collection_name = self.create_collection_name(project_id)
+        return await self.vectordb_client.delete_collection(collection_name=collection_name)
+    
     async def retrieve_context(
         self,
         query: str,
@@ -42,7 +90,7 @@ class TutorService(IRAGService):
             collection_name = self.create_collection_name(project_id)
             
             # Generate query embedding
-            query_vector = self.embedding_client.embed_text(
+            query_vector = await self.embedding_client.embed_text(
                 text=query,
                 document_type=DocumentTypeEnum.QUERY.value
             )

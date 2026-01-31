@@ -61,33 +61,8 @@ async def _index_data_content(task_instance, project_id: int, do_reset: int):
 
             raise Exception(f"No project found for project_id: {project_id}")
     
-        # generation client
-        generation_client = llm_provider_factory.create(provider=settings.GENERATION_BACKEND)
-        generation_client.set_generation_model(model_id = settings.GENERATION_MODEL_ID)
-
-        # embedding client
-        embedding_client = llm_provider_factory.create(provider=settings.EMBEDDING_BACKEND)
-        embedding_client.set_embedding_model(model_id=settings.EMBEDDING_MODEL_ID,
-                                                embedding_size=settings.EMBEDDING_MODEL_SIZE)
-        
-        # vector db client
-        vectordb_client = vectordb_provider_factory.create(
-            provider=settings.VECTOR_DB_BACKEND
-        )
-        await vectordb_client.connect()
-
-        from stores.llm.templates.template_parser import TemplateParser
-        template_parser = TemplateParser(
-            language=settings.PRIMARY_LANG,
-            default_language=settings.DEFAULT_LANG,
-        )
-
-        nlp_controller = NLPController(
-            vectordb_client=vectordb_client,
-            generation_client=generation_client,
-            embedding_client=embedding_client,
-            template_parser=template_parser,
-        )
+        # Use pre-wired TutorService from container
+        tutor_service = container.tutor_service
 
         has_records = True
         page_no = 1
@@ -95,11 +70,11 @@ async def _index_data_content(task_instance, project_id: int, do_reset: int):
         idx = 0
 
         # create collection if not exists
-        collection_name = nlp_controller.create_collection_name(project_id=project.project_id)
+        collection_name = tutor_service.create_collection_name(project_id=project.project_id)
 
         _ = await vectordb_client.create_collection(
             collection_name=collection_name,
-            embedding_size=embedding_client.embedding_size,
+            embedding_size=tutor_service.embedding_client.embedding_size,
             do_reset=do_reset,
         )
 
@@ -119,10 +94,13 @@ async def _index_data_content(task_instance, project_id: int, do_reset: int):
             chunks_ids =  [ c.chunk_id for c in page_chunks ]
             idx += len(page_chunks)
             
-            is_inserted = await nlp_controller.index_into_vector_db(
-                project=project,
-                chunks=page_chunks,
-                chunks_ids=chunks_ids
+            # Use tutor_service for indexing
+            is_inserted = await tutor_service.index_chunks(
+                project_id=project.project_id,
+                texts=[c.chunk_text for c in page_chunks],
+                metadata=[c.chunk_metadata for c in page_chunks],
+                record_ids=chunks_ids,
+                do_reset=False # Only reset on the first call (already handled above)
             )
 
             if not is_inserted:

@@ -1,14 +1,14 @@
 from fastapi import FastAPI, APIRouter, status, Request, Depends
 from fastapi.responses import JSONResponse
 from routes.schemes.nlp import PushRequest, SearchRequest
-from models.ProjectModel import ProjectModel
-from models.ChunkModel import ChunkModel
+from security.authentication import get_current_user
+from domains.learning.repository import ProjectRepository
+from domains.shared.dependencies import get_project_repo
+from domains.tutor import TutorService, TutoringMode
+from core.container import container
 from models import ResponseSignal
 from tasks.data_indexing import index_data_content
 from models.db_schemes import User
-from domains.identity import get_current_user
-from domains.tutor import TutorService, TutoringMode
-from core.container import container
 
 import logging
 
@@ -21,13 +21,10 @@ nlp_router = APIRouter(
 
 @nlp_router.post("/index/push/{project_id}")
 async def index_project(request: Request, project_id: int, push_request: PushRequest,
-                        current_user: User = Depends(get_current_user)):
+                        current_user: User = Depends(get_current_user),
+                        project_repo: ProjectRepository = Depends(get_project_repo)):
 
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    project = await project_model.get_project_or_create_one(
+    project = await project_repo.get_or_create(
         project_id=project_id,
         owner_id=current_user.user_id
     )
@@ -55,13 +52,10 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
 
 @nlp_router.get("/index/info/{project_id}")
 async def get_project_index_info(request: Request, project_id: int,
-                                 current_user: User = Depends(get_current_user)):
+                                 current_user: User = Depends(get_current_user),
+                                 project_repo: ProjectRepository = Depends(get_project_repo)):
     
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    project = await project_model.get_project_or_create_one(
+    project = await project_repo.get_or_create(
         project_id=project_id,
         owner_id=current_user.user_id
     )
@@ -74,13 +68,8 @@ async def get_project_index_info(request: Request, project_id: int,
             }
         )
 
-    # Use new async tutor service
-    tutor_service = TutorService(
-        llm_provider=container.async_llm_provider,
-        vectordb_client=request.app.vectordb_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
+    # Use injected async tutor service
+    tutor_service = request.app.tutor_service
 
     collection_name = tutor_service.create_collection_name(project.project_id)
     collection_info = await request.app.vectordb_client.get_collection_info(
@@ -96,13 +85,10 @@ async def get_project_index_info(request: Request, project_id: int,
 
 @nlp_router.post("/index/search/{project_id}")
 async def search_index(request: Request, project_id: int, search_request: SearchRequest,
-                       current_user: User = Depends(get_current_user)):
+                       current_user: User = Depends(get_current_user),
+                       project_repo: ProjectRepository = Depends(get_project_repo)):
     
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    project = await project_model.get_project_or_create_one(
+    project = await project_repo.get_or_create(
         project_id=project_id,
         owner_id=current_user.user_id
     )
@@ -115,13 +101,8 @@ async def search_index(request: Request, project_id: int, search_request: Search
             }
         )
 
-    # Use new async tutor service
-    tutor_service = TutorService(
-        llm_provider=container.async_llm_provider,
-        vectordb_client=request.app.vectordb_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
+    # Use injected async tutor service
+    tutor_service = request.app.tutor_service
 
     results = await tutor_service.retrieve_context(
         query=search_request.text,
@@ -146,13 +127,10 @@ async def search_index(request: Request, project_id: int, search_request: Search
 
 @nlp_router.post("/index/answer/{project_id}")
 async def answer_rag(request: Request, project_id: int, search_request: SearchRequest,
-                     current_user: User = Depends(get_current_user)):
+                     current_user: User = Depends(get_current_user),
+                     project_repo: ProjectRepository = Depends(get_project_repo)):
     
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    project = await project_model.get_project_or_create_one(
+    project = await project_repo.get_or_create(
         project_id=project_id,
         owner_id=current_user.user_id
     )
@@ -165,13 +143,8 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
             }
         )
 
-    # Use new async tutor service
-    tutor_service = TutorService(
-        llm_provider=container.async_llm_provider,
-        vectordb_client=request.app.vectordb_client,
-        embedding_client=request.app.embedding_client,
-        template_parser=request.app.template_parser,
-    )
+    # Use injected async tutor service
+    tutor_service = request.app.tutor_service
 
     # Retrieve context
     context_results = await tutor_service.retrieve_context(
@@ -196,7 +169,7 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
     answer = await tutor_service.tutor_response(
         query=search_request.text,
         context=context_texts,
-        level="B1",  # TODO: Get from user profile
+        level=current_user.proficiency_level, # Use user profile level
         mode=TutoringMode.SOCRATIC
     )
 

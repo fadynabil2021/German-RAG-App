@@ -7,15 +7,14 @@ import aiofiles
 from models import ResponseSignal
 import logging
 from .schemes.data import ProcessRequest
-from models.ProjectModel import ProjectModel
-from models.ChunkModel import ChunkModel
-from models.AssetModel import AssetModel
-from models.db_schemes import DataChunk, Asset, User
+from security.authentication import get_current_user
+from domains.learning.repository import ProjectRepository
+from domains.learning.asset_repository import AssetRepository
+from domains.shared.dependencies import get_project_repo, get_asset_repo
+from models.db_schemes import Asset, User
 from models.enums.AssetTypeEnum import AssetTypeEnum
-from controllers import NLPController
 from tasks.file_processing import process_project_files
 from tasks.process_workflow import process_and_push_workflow
-from security.authentication import get_current_user
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -27,13 +26,11 @@ data_router = APIRouter(
 @data_router.post("/upload/{project_id}")
 async def upload_data(request: Request, project_id: int, file: UploadFile,
                       app_settings: Settings = Depends(get_settings),
-                      current_user: User = Depends(get_current_user)):
+                      current_user: User = Depends(get_current_user),
+                      project_repo: ProjectRepository = Depends(get_project_repo),
+                      asset_repo: AssetRepository = Depends(get_asset_repo)):
         
-    project_model = await ProjectModel.create_instance(
-        db_client=request.app.db_client
-    )
-
-    project = await project_model.get_project_or_create_one(
+    project = await project_repo.get_or_create(
         project_id=project_id,
         owner_id=current_user.user_id
     )
@@ -72,11 +69,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
             }
         )
 
-    # store the assets into the database
-    asset_model = await AssetModel.create_instance(
-        db_client=request.app.db_client
-    )
-
+    # store the assets into the database via repository
     asset_resource = Asset(
         asset_project_id=project.project_id,
         asset_type=AssetTypeEnum.FILE.value,
@@ -84,7 +77,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
         asset_size=os.path.getsize(file_path)
     )
 
-    asset_record = await asset_model.create_asset(asset=asset_resource)
+    asset_record = await asset_repo.save(asset=asset_resource)
 
     return JSONResponse(
             content={
@@ -95,13 +88,10 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
 
 @data_router.post("/process/{project_id}")
 async def process_endpoint(request: Request, project_id: int, process_request: ProcessRequest,
-                           current_user: User = Depends(get_current_user)):
+                           current_user: User = Depends(get_current_user),
+                           project_repo: ProjectRepository = Depends(get_project_repo)):
 
-    # Verify project ownership (optional but recommended)
-    # For now assuming if they can trigger process, it's fine or they checked ownership before?
-    # Ideally we check project exists and belongs to user here too.
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project = await project_model.get_project_or_create_one(project_id=project_id, owner_id=current_user.user_id)
+    project = await project_repo.get_or_create(project_id=project_id, owner_id=current_user.user_id)
     
     if not project:
         return JSONResponse(
@@ -132,10 +122,10 @@ async def process_endpoint(request: Request, project_id: int, process_request: P
 
 @data_router.post("/process-and-push/{project_id}")
 async def process_and_push_endpoint(request: Request, project_id: int, process_request: ProcessRequest,
-                                    current_user: User = Depends(get_current_user)):
+                                    current_user: User = Depends(get_current_user),
+                                    project_repo: ProjectRepository = Depends(get_project_repo)):
 
-    project_model = await ProjectModel.create_instance(db_client=request.app.db_client)
-    project = await project_model.get_project_or_create_one(project_id=project_id, owner_id=current_user.user_id)
+    project = await project_repo.get_or_create(project_id=project_id, owner_id=current_user.user_id)
     
     if not project:
          return JSONResponse(

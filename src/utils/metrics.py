@@ -7,6 +7,10 @@ import time
 REQUEST_COUNT = Counter('http_requests_total', 'Total HTTP Requests', ['method', 'endpoint', 'status'])
 REQUEST_LATENCY = Histogram('http_request_duration_seconds', 'HTTP Request Latency', ['method', 'endpoint'])
 
+# LLM Metrics
+LLM_TOKEN_USAGE = Counter('llm_tokens_total', 'Total LLM tokens used', ['model', 'type']) # type can be 'prompt' or 'completion'
+LLM_ESTIMATED_COST = Counter('llm_cost_usd_total', 'Estimated LLM cost in USD', ['model'])
+
 class PrometheusMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
 

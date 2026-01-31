@@ -6,6 +6,8 @@ from typing import Union
 from openai import AsyncOpenAI
 from stores.llm.LLMEnums import OpenAIEnums, DocumentTypeEnum
 from helpers.config import Settings
+from utils.metrics import LLM_TOKEN_USAGE, LLM_ESTIMATED_COST
+from stores.llm.semantic_cache import SemanticCache
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,12 +15,13 @@ logger = logging.getLogger(__name__)
 class AsyncOpenAIProvider:
     """Async OpenAI provider for non-blocking LLM calls."""
     
-    def __init__(self, config: Settings):
+    def __init__(self, config: Settings, cache: SemanticCache = None):
         self.config = config
         self.client = AsyncOpenAI(
             api_key=config.OPENAI_API_KEY.get_secret_value() if config.OPENAI_API_KEY else None,
             base_url=config.OPENAI_API_URL or None
         )
+        self.cache = cache
         self.generation_model_id = None
         self.embedding_model_id = None
         self.embedding_size = None
@@ -61,6 +64,12 @@ class AsyncOpenAIProvider:
         if chat_history is None:
             chat_history = []
         
+        # Check cache first
+        if self.cache:
+            cached_response = self.cache.get_cached_response(prompt, self.generation_model_id)
+            if cached_response:
+                return cached_response
+
         # Add user prompt to history
         chat_history.append(
             self.construct_prompt(prompt=prompt, role=self.enums.USER.value)
@@ -77,8 +86,22 @@ class AsyncOpenAIProvider:
             if not response or not response.choices or len(response.choices) == 0:
                 logger.error("Empty response from OpenAI")
                 return None
+            
+            # Record metrics
+            if hasattr(response, 'usage') and response.usage:
+                LLM_TOKEN_USAGE.labels(model=self.generation_model_id, type='prompt').inc(response.usage.prompt_tokens)
+                LLM_TOKEN_USAGE.labels(model=self.generation_model_id, type='completion').inc(response.usage.completion_tokens)
+                # Simplified cost calculation (e.g., $0.50 per 1M tokens)
+                estimated_cost = (response.usage.total_tokens / 1_000_000) * 0.50
+                LLM_ESTIMATED_COST.labels(model=self.generation_model_id).inc(estimated_cost)
                 
-            return response.choices[0].message.content
+            content = response.choices[0].message.content
+            
+            # Store in cache
+            if self.cache and content:
+                self.cache.set_cached_response(prompt, self.generation_model_id, content)
+
+            return content
             
         except Exception as e:
             logger.error(f"Error generating text: {e}")
@@ -105,6 +128,13 @@ class AsyncOpenAIProvider:
             if not response or not response.data:
                 logger.error("Empty embedding response from OpenAI")
                 return []
+            
+            # Record metrics
+            if hasattr(response, 'usage') and response.usage:
+                LLM_TOKEN_USAGE.labels(model=self.embedding_model_id, type='prompt').inc(response.usage.prompt_tokens)
+                # Simplified cost for embeddings
+                estimated_cost = (response.usage.total_tokens / 1_000_000) * 0.02
+                LLM_ESTIMATED_COST.labels(model=self.embedding_model_id).inc(estimated_cost)
             
             # Extract embeddings
             embeddings = [item.embedding for item in response.data]
