@@ -5,21 +5,23 @@ import Sidebar from './Sidebar';
 import styles from './layout.module.css';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
+import BackendStatusBanner from '@/components/BackendStatusBanner';
+import DevDebugPanel from '@/components/DevDebugPanel';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
-    const { user, isLoading } = useAuth();
+    const { user, authStatus } = useAuth();
     const router = useRouter();
 
     React.useEffect(() => {
-        if (!isLoading && !user) {
+        if (authStatus === 'unauthenticated') {
             const publicPaths = ['/login', '/register'];
             if (!publicPaths.includes(window.location.pathname)) {
                 router.push('/login');
             }
         }
-    }, [user, isLoading, router]);
+    }, [authStatus, router]);
 
-    if (isLoading) {
+    if (authStatus === 'loading') {
         return (
             <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--background)' }}>
                 <div className="animate-pulse-subtle" style={{ color: 'var(--primary)', fontSize: '1.2rem', fontWeight: 600 }}>Loading G-RAG...</div>
@@ -37,6 +39,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div className={styles.mainContainer}>
             <Sidebar />
             <main className={styles.content}>
+                <BackendStatusBanner />
                 <header className={styles.topbar}>
                     <div style={{ fontSize: '0.9rem', color: '#94a3b8' }}>
                         Willkommen zurück, <span style={{ color: 'var(--foreground)', fontWeight: 600 }}>{user.email.split('@')[0]}</span>
@@ -53,6 +56,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     {children}
                 </div>
             </main>
+            <DevDebugPanel />
         </div>
     );
 }

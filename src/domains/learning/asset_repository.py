@@ -35,3 +35,10 @@ class AssetRepository(BaseRepository[Asset]):
     async def list(self, skip: int = 0, limit: int = 100) -> List[Asset]:
         result = await self.session.execute(select(Asset).offset(skip).limit(limit))
         return list(result.scalars().all())
+
+    async def get_count_by_owner(self, owner_id: int) -> int:
+        from models.db_schemes.minirag.schemes.project import Project
+        from sqlalchemy import func
+        query = select(func.count(Asset.asset_id)).join(Project).where(Project.owner_id == owner_id)
+        result = await self.session.execute(query)
+        return result.scalar() or 0

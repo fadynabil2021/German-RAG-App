@@ -1,0 +1,95 @@
+name: G-RAG CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # --- BACKEND JOBS ---
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          cd src
+          pip install -r requirements.txt
+          pip install pytest flake8
+      - name: Lint with flake8
+        run: flake8 src --count --select=E9,F63,F7,F82 --show-source --statistics
+      - name: Run tests
+        run: |
+          cd src
+          pytest
+
+  backend-build:
+    needs: backend-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t g-rag/backend:${{ github.sha }} -f docker/minirag/Dockerfile .
+      # In real production, you'd push to ECR/GCR/DockerHub here
+      # - name: Push to Registry
+      #   run: docker push g-rag/backend:${{ github.sha }}
+
+  # --- FRONTEND JOBS ---
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+      - name: Run lint
+        run: |
+          cd frontend
+          npm run lint
+      # - name: Run tests
+      #   run: |
+          # cd frontend
+          # npm test
+
+  frontend-build:
+    needs: frontend-test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image
+        run: docker build -t g-rag/frontend:${{ github.sha }} -f frontend/Dockerfile ./frontend
+      # - name: Push to Registry
+      #   run: docker push g-rag/frontend:${{ github.sha }}
+
+  # --- DEPLOYMENT JOB ---
+  deploy:
+    needs: [backend-build, frontend-build]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG }}" | base64 -d > ~/.kube/config
+      - name: Deploy to K8s
+        run: |
+          kubectl apply -f k8s/namespace-and-secrets.yaml
+          kubectl apply -f k8s/backend.yaml
+          kubectl apply -f k8s/frontend.yaml
+          kubectl apply -f k8s/ingress.yaml
+          # Update images to specific SHA
+          kubectl set image deployment/g-rag-backend backend=g-rag/backend:${{ github.sha }} -n g-rag
+          kubectl set image deployment/g-rag-frontend frontend=g-rag/frontend:${{ github.sha }} -n g-rag

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: g-rag-backend
+  namespace: g-rag
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: g-rag-backend
+  template:
+    metadata:
+      labels:
+        app: g-rag-backend
+    spec:
+      containers:
+      - name: backend
+        image: g-rag/backend:latest
+        ports:
+        - containerPort: 8000
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: g-rag-secrets
+              key: postgres-password
+        - name: JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: g-rag-secrets
+              key: jwt-secret-key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: g-rag-secrets
+              key: openai-api-key
+        # Additional env vars would go here...
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 5
+        resources:
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: g-rag-backend-svc
+  namespace: g-rag
+spec:
+  selector:
+    app: g-rag-backend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 8000
+  type: ClusterIP

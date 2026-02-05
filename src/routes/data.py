@@ -15,6 +15,9 @@ from models.db_schemes import Asset, User
 from models.enums.AssetTypeEnum import AssetTypeEnum
 from tasks.file_processing import process_project_files
 from tasks.process_workflow import process_and_push_workflow
+from security.quotas import check_message_quota, check_asset_quota
+
+# Logger setup
 
 logger = logging.getLogger('uvicorn.error')
 
@@ -28,7 +31,8 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
                       app_settings: Settings = Depends(get_settings),
                       current_user: User = Depends(get_current_user),
                       project_repo: ProjectRepository = Depends(get_project_repo),
-                      asset_repo: AssetRepository = Depends(get_asset_repo)):
+                      asset_repo: AssetRepository = Depends(get_asset_repo),
+                      quota_check: bool = Depends(check_asset_quota)):
         
     project = await project_repo.get_or_create(
         project_id=project_id,

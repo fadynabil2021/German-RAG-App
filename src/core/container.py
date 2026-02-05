@@ -1,4 +1,5 @@
 from helpers.config import get_settings
+import redis.asyncio as redis
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 from stores.llm.LLMProviderFactory import LLMProviderFactory
@@ -7,6 +8,9 @@ from infrastructure.llm.async_openai_provider import AsyncOpenAIProvider
 from stores.llm.templates.template_parser import TemplateParser
 from domains.tutor.service import TutorService
 from stores.llm.semantic_cache import SemanticCache
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Container:
     """Dependency Injection Container - Singleton pattern."""
@@ -42,6 +46,13 @@ class Container:
             self.db_engine, class_=AsyncSession, expire_on_commit=False
         )
         
+        # Redis Client (Async)
+        # Parse host/port from celery backend if possible, or use defaults
+        self.redis_client = redis.from_url(
+            self.settings.CELERY_RESULT_BACKEND,
+            decode_responses=True
+        )
+        
         # LLM and VectorDB Factories (Legacy - for backward compatibility)
         self.llm_provider_factory = LLMProviderFactory(self.settings)
         self.vectordb_provider_factory = VectorDBProviderFactory(
@@ -57,11 +68,26 @@ class Container:
             config=self.settings,
             cache=self.llm_cache
         )
-        self.async_llm_provider.set_generation_model(self.settings.GENERATION_MODEL_ID)
-        self.async_llm_provider.set_embedding_model(
-            self.settings.EMBEDDING_MODEL_ID,
-            self.settings.EMBEDDING_MODEL_SIZE
-        )
+        
+        # Guard: Validate OpenAI models if using OpenAI backend
+        if self.settings.GENERATION_BACKEND == "OPENAI":
+            gen_model = self.settings.OPENAI_CHAT_MODEL or self.settings.GENERATION_MODEL_ID
+            self.async_llm_provider.set_generation_model(gen_model)
+            logger.info(f"LLM Generation Provider: OpenAI | Model: {gen_model}")
+            
+        if self.settings.EMBEDDING_BACKEND == "OPENAI":
+            embed_model = self.settings.OPENAI_EMBEDDING_MODEL or self.settings.EMBEDDING_MODEL_ID
+            self.async_llm_provider.set_embedding_model(
+                embed_model,
+                self.settings.EMBEDDING_MODEL_SIZE
+            )
+            logger.info(f"LLM Embedding Provider: OpenAI | Model: {embed_model}")
+        elif self.settings.EMBEDDING_BACKEND == "COHERE":
+            logger.warning("Cohere embedding backend selected but using AsyncOpenAIProvider as fallback/placeholder. Ensure Cohere SDK is integrated.")
+            self.async_llm_provider.set_embedding_model(
+                self.settings.EMBEDDING_MODEL_ID,
+                self.settings.EMBEDDING_MODEL_SIZE
+            )
         
         # Template Parser
         self.template_parser = TemplateParser(

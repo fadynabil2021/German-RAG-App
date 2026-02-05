@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[SecretStr] = None
     OPENAI_API_URL: Optional[str] = None
     COHERE_API_KEY: Optional[SecretStr] = None
+    
+    # OpenAI Models
+    OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
 
     # File Ingestion
     FILE_ALLOWED_TYPES: List[str] = [".txt", ".pdf"]
@@ -78,6 +82,10 @@ class Settings(BaseSettings):
     CELERY_TASK_TIME_LIMIT: int = 600
     CELERY_WORKER_CONCURRENCY: int = 2
     CELERY_FLOWER_PASSWORD: Optional[SecretStr] = None
+
+    # Freemium Quotas
+    FREE_TIER_DAILY_MESSAGE_LIMIT: int = 20
+    FREE_TIER_MAX_ASSETS: int = 5
 
 def get_settings() -> Settings:
     return Settings()

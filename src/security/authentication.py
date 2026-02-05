@@ -18,8 +18,15 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 def verify_password(plain_password, hashed_password):
     return pwd_context.verify(plain_password, hashed_password)
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def get_password_hash(password: str) -> str:
+    try:
+        password_bytes = password.encode("utf-8")[:72]
+        return pwd_context.hash(password_bytes)
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid password format"
+        )
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()

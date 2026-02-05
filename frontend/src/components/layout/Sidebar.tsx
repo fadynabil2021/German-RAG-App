@@ -11,7 +11,8 @@ import {
     LogOut,
     BookOpen,
     User as UserIcon,
-    ShieldCheck
+    ShieldCheck,
+    Trophy
 } from 'lucide-react';
 import styles from './layout.module.css';
 import { useAuth } from '@/context/AuthContext';
@@ -24,6 +25,7 @@ export default function Sidebar() {
         { name: 'Dashboard', href: '/', icon: LayoutDashboard },
         { name: 'AI Tutor', href: '/chat', icon: MessageSquare },
         { name: 'My Projects', href: '/projects', icon: Library },
+        { name: 'Learning Path', href: '/learning-path', icon: Trophy },
         { name: 'Grammar Guide', href: '/grammar', icon: BookOpen },
     ];
 

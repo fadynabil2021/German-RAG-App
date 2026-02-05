@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: g-rag-frontend
+  namespace: g-rag
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: g-rag-frontend
+  template:
+    metadata:
+      labels:
+        app: g-rag-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: g-rag/frontend:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NEXT_PUBLIC_API_URL
+          value: "https://api.g-rag.com" # Example url
+        resources:
+          limits:
+            cpu: "300m"
+            memory: "300Mi"
+          requests:
+            cpu: "100m"
+            memory: "150Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: g-rag-frontend-svc
+  namespace: g-rag
+spec:
+  selector:
+    app: g-rag-frontend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 3000
+  type: ClusterIP

@@ -4,3 +4,5 @@ from .project import Project
 from .datachunk import DataChunk, RetrievedDocument
 from .celery_task_execution import CeleryTaskExecution
 from .user import User
+from .conversation import Conversation, Message
+from .learning import LearningPath, Progress

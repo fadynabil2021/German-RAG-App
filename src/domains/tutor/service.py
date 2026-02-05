@@ -148,14 +148,19 @@ class TutorService(IRAGService):
             else:
                 system_prompt = self.template_parser.get("rag", "system_prompt")
             
-            # Build document context
-            documents_prompts = "\n".join([
-                self.template_parser.get("rag", "document_prompt", {
-                    "doc_num": idx + 1,
-                    "chunk_text": self.llm_provider.process_text(doc),
-                })
-                for idx, doc in enumerate(context)
-            ])
+            # Handling for Graceful Degradation: If context retrieval failed or returned empty
+            if not context:
+                logger.warning(f"Graceful Degradation: No context for user query: {query}")
+                documents_prompts = "SYSTEM NOTE: No specific relevant documents were found in the learning materials for this question. Please answer based on your general knowledge but mention you didn't find specific documentation."
+            else:
+                # Build document context
+                documents_prompts = "\n".join([
+                    self.template_parser.get("rag", "document_prompt", {
+                        "doc_num": idx + 1,
+                        "chunk_text": self.llm_provider.process_text(doc),
+                    })
+                    for idx, doc in enumerate(context)
+                ])
             
             # Build footer with query
             footer_prompt = self.template_parser.get("rag", "footer_prompt", {

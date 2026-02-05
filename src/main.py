@@ -1,11 +1,34 @@
 from fastapi import FastAPI
 from routes import base, data, nlp, admin, auth
+from routes.dashboard import dashboard_router
+from routes.projects import projects_router
 from core.container import container
 from utils.metrics import setup_metrics
 from stores.llm.templates.template_parser import TemplateParser
 from security.rate_limit import RateLimitMiddleware
+from fastapi.middleware.cors import CORSMiddleware
+from utils.logger import setup_logging
+from routes.health import health_router
+import os
+
+# Setup Structured Logging
+logger = setup_logging()
 
 app = FastAPI()
+
+# Integrated Error Tracking (e.g. Sentry)
+# if os.getenv("SENTRY_DSN"):
+#     import sentry_sdk
+#     sentry_sdk.init(dsn=os.getenv("SENTRY_DSN"), traces_sample_rate=1.0)
+
+# Add CORS Middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # In production, replace with specific frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Add Rate Limiting Middleware
 app.add_middleware(RateLimitMiddleware, requests_per_minute=100)
@@ -52,3 +75,6 @@ app.include_router(data.data_router)
 app.include_router(nlp.nlp_router)
 app.include_router(admin.admin_router)
 app.include_router(auth.auth_router)
+app.include_router(dashboard_router)
+app.include_router(projects_router)
+app.include_router(health_router)

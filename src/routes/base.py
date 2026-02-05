@@ -22,8 +22,8 @@ async def welcome(app_settings: Settings = Depends(get_settings)):
         "app_version": app_version,
     }
 
-@base_router.get("/health")
-async def health_check():
+@base_router.get("/health/simple")
+async def health_check_simple():
     return {"status": "ok"}
 
 @base_router.get("/readiness")

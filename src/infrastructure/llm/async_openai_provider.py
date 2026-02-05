@@ -113,13 +113,17 @@ class AsyncOpenAIProvider:
         Supports both single text and batch processing.
         """
         if not self.embedding_model_id:
-            logger.error("Embedding model not set")
-            return []
+            # Fallback to config if not explicitly set via set_embedding_model
+            self.embedding_model_id = self.config.OPENAI_EMBEDDING_MODEL
+            if not self.embedding_model_id:
+                logger.error("Embedding model not set and no fallback available")
+                return []
         
         try:
             # Handle both single string and list of strings
             texts = [text] if isinstance(text, str) else text
             
+            # Use self.embedding_model_id which is now guaranteed or logged
             response = await self.client.embeddings.create(
                 model=self.embedding_model_id,
                 input=texts

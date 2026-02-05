@@ -9,6 +9,7 @@ from core.container import container
 from models import ResponseSignal
 from tasks.data_indexing import index_data_content
 from models.db_schemes import User
+from security.quotas import check_message_quota
 
 import logging
 
@@ -128,7 +129,18 @@ async def search_index(request: Request, project_id: int, search_request: Search
 @nlp_router.post("/index/answer/{project_id}")
 async def answer_rag(request: Request, project_id: int, search_request: SearchRequest,
                      current_user: User = Depends(get_current_user),
-                     project_repo: ProjectRepository = Depends(get_project_repo)):
+                     project_repo: ProjectRepository = Depends(get_project_repo),
+                     quota_check: bool = Depends(check_message_quota)):
+    
+    # Parse and validate mode from request
+    mode_str = search_request.mode or 'SOCRATIC'
+    try:
+        mode = TutoringMode[mode_str]
+    except KeyError:
+        mode = TutoringMode.SOCRATIC
+    
+    # Log request details
+    logger.info(f"[G-RAG] user_id={current_user.user_id} project_id={project_id} mode={mode_str}")
     
     project = await project_repo.get_or_create(
         project_id=project_id,
@@ -139,45 +151,58 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
          return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
-                "signal": ResponseSignal.PROJECT_NOT_FOUND_ERROR.value
+                "signal": ResponseSignal.PROJECT_NOT_FOUND_ERROR.value,
+                "error_type": "PROJECT_NOT_FOUND",
+                "message": "Project does not exist or you don't have access"
             }
         )
 
     # Use injected async tutor service
     tutor_service = request.app.tutor_service
 
+    # Sanitize user input
+    from security.sanitizer import PromptSanitizer
+    sanitized_query = PromptSanitizer.sanitize(search_request.text)
+
     # Retrieve context
     context_results = await tutor_service.retrieve_context(
-        query=search_request.text,
+        query=sanitized_query,
         project_id=project.project_id,
         limit=search_request.limit
     )
 
     if not context_results:
+        logger.warning(f"[G-RAG] No context found for project_id={project_id}")
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
                 "signal": ResponseSignal.RAG_ANSWER_ERROR.value,
-                "message": "No relevant context found"
+                "error_type": "NO_INDEXED_DOCUMENTS",
+                "message": "Das Projekt hat noch keine indizierten Dokumente. Bitte laden Sie zuerst Dateien hoch."
             }
         )
+
+    # Log embedding count
+    logger.info(f"[G-RAG] Retrieved {len(context_results)} context chunks")
 
     # Extract text from context
     context_texts = [result["text"] for result in context_results]
 
-    # Generate answer using async LLM
+    # Generate answer using async LLM - USE MODE FROM REQUEST
     answer = await tutor_service.tutor_response(
         query=search_request.text,
         context=context_texts,
-        level=current_user.proficiency_level, # Use user profile level
-        mode=TutoringMode.SOCRATIC
+        level=current_user.proficiency_level,
+        mode=mode  # Now using the mode from request!
     )
 
     if not answer:
         return JSONResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 content={
-                    "signal": ResponseSignal.RAG_ANSWER_ERROR.value
+                    "signal": ResponseSignal.RAG_ANSWER_ERROR.value,
+                    "error_type": "LLM_GENERATION_FAILED",
+                    "message": "Der KI-Tutor konnte keine Antwort generieren. Bitte versuchen Sie es erneut."
                 }
         )
     
@@ -185,6 +210,7 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
         content={
             "signal": ResponseSignal.RAG_ANSWER_SUCCESS.value,
             "answer": answer,
-            "context_count": len(context_results)
+            "context_count": len(context_results),
+            "mode": mode_str
         }
     )
