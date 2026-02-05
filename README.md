@@ -173,7 +173,7 @@ Full API documentation is available at `http://localhost:5000/docs`. Major endpo
 - [x] **Phase 4: Security**: Redis rate limiting, Prompt sanitization & Quota guards.
 - [x] **Phase 5: Cloud**: Docker optimization, K8s manifests & CI/CD pipelines.
 - [x] **Phase 6: Reliability**: Centralized logging, Error tracking (Sentry) & Metrics.
-- [x] **Phase 7: SaaS**: Freemium gating, Product Roadmap & Scalability analysis. (See [PRODUCT.md](./PRODUCT.md))
+- [x] **Phase 7: SaaS**: Freemium gating, Product Roadmap & Scalability analysis.
 
 ---
 
