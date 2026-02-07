@@ -8,7 +8,7 @@
 
 A production-grade, AI-powered German language learning platform leveraging **Retrieval-Augmented Generation (RAG)**. This system transforms static study materials into interactive, level-aware tutoring experiences, helping learners master German with context-driven AI assistance.
 
-![Dashboard Mockup](assets/dashboard_mockup.png)
+![Dashboard Mockup](assets/MiniRagApp.jpeg)
 
 ---
 
