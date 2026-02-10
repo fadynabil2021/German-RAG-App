@@ -48,7 +48,7 @@ async def list_projects(
             func.count(Asset.asset_id).label("asset_count")
         )
         .outerjoin(Asset, Asset.asset_project_id == Project.project_id)
-        .where(Project.project_owner == current_user.user_id)
+        .where(Project.owner_id == current_user.user_id)
         .group_by(Project.project_id)
         .order_by(Project.created_at.desc())
     )
