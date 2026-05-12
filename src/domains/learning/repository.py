@@ -39,6 +39,8 @@ class ProjectRepository(BaseRepository[Project]):
     async def get_or_create(self, project_id: int, owner_id: int = None) -> Optional[Project]:
         project = await self.get_by_id(project_id)
         if project:
+            if owner_id is not None and project.owner_id != owner_id:
+                return None # Ownership mismatch
             return project
         
         if owner_id is not None:

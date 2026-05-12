@@ -39,6 +39,14 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
         owner_id=current_user.user_id
     )
 
+    if not project:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={
+                "signal": "PROJECT_NOT_FOUND_OR_ACCESS_DENIED"
+            }
+        )
+
     # validate the file properties
     data_controller = DataController()
 
@@ -83,10 +91,22 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
 
     asset_record = await asset_repo.save(asset=asset_resource)
 
+    logger.info(f"[G-RAG] Document uploaded: user={current_user.user_id}, project={project.project_id}, filename={file.filename}")
+
+    # Automatically trigger processing and indexing workflow
+    process_and_push_workflow.delay(
+        project_id=project.project_id,
+        file_id=file_id,
+        chunk_size=1000, # Default chunk size for German RAG
+        overlap_size=100,
+        do_reset=0
+    )
+
     return JSONResponse(
             content={
                 "signal": ResponseSignal.FILE_UPLOAD_SUCCESS.value,
                 "file_id": str(asset_record.asset_id),
+                "project_id": project.project_id
             }
         )
 

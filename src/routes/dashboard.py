@@ -30,7 +30,7 @@ async def get_dashboard_stats(
         message_count_result = await db.execute(
             select(func.count(Message.message_id))
             .join(Project, Message.conversation_id == Project.project_id)
-            .where(Project.project_owner == user_id)
+            .where(Project.owner_id == user_id)
         )
         message_count = message_count_result.scalar() or 0
         words_learned = message_count * 15  # Approximation: 15 words per interaction
@@ -44,7 +44,7 @@ async def get_dashboard_stats(
         sessions_result = await db.execute(
             select(func.count(func.distinct(func.date(Message.created_at))))
             .join(Project, Message.conversation_id == Project.project_id)
-            .where(Project.project_owner == user_id)
+            .where(Project.owner_id == user_id)
         )
         total_sessions = sessions_result.scalar() or 0
     except Exception:
@@ -60,7 +60,7 @@ async def get_dashboard_stats(
         dates_result = await db.execute(
             select(func.distinct(func.date(Message.created_at)))
             .join(Project, Message.conversation_id == Project.project_id)
-            .where(Project.project_owner == user_id)
+            .where(Project.owner_id == user_id)
             .order_by(func.date(Message.created_at).desc())
         )
         dates = [row[0] for row in dates_result.fetchall()]
@@ -81,7 +81,7 @@ async def get_dashboard_stats(
     try:
         project_count_result = await db.execute(
             select(func.count(Project.project_id))
-            .where(Project.project_owner == user_id)
+            .where(Project.owner_id == user_id)
         )
         project_count = project_count_result.scalar() or 0
     except Exception:

@@ -78,7 +78,7 @@ async def create_project(
     new_project = Project(
         project_name=project_in.project_name,
         project_description=project_in.project_description,
-        project_owner=current_user.user_id
+        owner_id=current_user.user_id
     )
     db.add(new_project)
     await db.commit()
@@ -113,7 +113,7 @@ async def get_project(
         )
         .outerjoin(Asset, Asset.asset_project_id == Project.project_id)
         .where(Project.project_id == project_id)
-        .where(Project.project_owner == current_user.user_id)
+        .where(Project.owner_id == current_user.user_id)
         .group_by(Project.project_id)
     )
     
@@ -145,7 +145,7 @@ async def delete_project(
     result = await db.execute(
         select(Project)
         .where(Project.project_id == project_id)
-        .where(Project.project_owner == current_user.user_id)
+        .where(Project.owner_id == current_user.user_id)
     )
     project = result.scalars().first()
     

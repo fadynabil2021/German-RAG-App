@@ -21,12 +21,19 @@ export default function ProjectsPage() {
     const [isCreating, setIsCreating] = useState(false);
     const [newProjectName, setNewProjectName] = useState('');
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+    const [isUploading, setIsUploading] = useState(false);
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
     const router = useRouter();
 
     const fetchProjects = async () => {
         try {
             const response = await api.get('/projects');
             setProjects(response.data);
+            // Auto-select first project if none selected
+            if (response.data.length > 0 && !selectedProjectId) {
+                setSelectedProjectId(response.data[0].project_id);
+            }
             setError(null);
         } catch (err: any) {
             console.error('Failed to fetch projects:', err);
@@ -40,6 +47,12 @@ export default function ProjectsPage() {
         fetchProjects();
     }, []);
 
+    useEffect(() => {
+        if (projects.length === 0 && !isLoading) {
+            console.warn("[G-RAG] Empty state expected for new users. Upload docs to enable Lernen.");
+        }
+    }, [projects, isLoading]);
+
     const handleCreateProject = async () => {
         if (!newProjectName.trim()) return;
 
@@ -50,6 +63,7 @@ export default function ProjectsPage() {
                 project_description: ''
             });
             setProjects([response.data, ...projects]);
+            setSelectedProjectId(response.data.project_id);
             setNewProjectName('');
             setShowCreateModal(false);
         } catch (err: any) {
@@ -60,15 +74,56 @@ export default function ProjectsPage() {
         }
     };
 
-    const handleDeleteProject = async (projectId: number) => {
+    const handleDeleteProject = async (e: React.MouseEvent, projectId: number) => {
+        e.stopPropagation();
         if (!confirm('Möchten Sie dieses Projekt wirklich löschen?')) return;
 
         try {
             await api.delete(`/projects/${projectId}`);
             setProjects(projects.filter(p => p.project_id !== projectId));
+            if (selectedProjectId === projectId) {
+                setSelectedProjectId(null);
+            }
         } catch (err) {
             console.error('Failed to delete project:', err);
             alert('Projekt konnte nicht gelöscht werden');
+        }
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !selectedProjectId) return;
+
+        // Validation
+        const allowedTypes = ['application/pdf', 'text/plain'];
+        if (!allowedTypes.includes(file.type)) {
+            alert('Nur PDF und TXT Dateien sind erlaubt.');
+            return;
+        }
+
+        if (file.size > 10 * 1024 * 1024) {
+            alert('Datei ist zu groß (max. 10MB).');
+            return;
+        }
+
+        setIsUploading(true);
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            await api.post(`/data/upload/${selectedProjectId}`, formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+            alert('Datei erfolgreich hochgeladen! Die Verarbeitung läuft im Hintergrund.');
+            fetchProjects(); // Refresh to update asset count
+        } catch (err: any) {
+            console.error('Upload failed:', err);
+            alert(err.response?.data?.signal || 'Upload fehlgeschlagen');
+        } finally {
+            setIsUploading(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
@@ -177,13 +232,30 @@ export default function ProjectsPage() {
                 </div>
             ) : (
                 <>
-                    <div className={styles.uploadZone}>
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileUpload}
+                        style={{ display: 'none' }}
+                        accept=".pdf,.txt"
+                    />
+                    <div
+                        className={`${styles.uploadZone} ${isUploading ? styles.uploading : ''}`}
+                        onClick={() => !isUploading && fileInputRef.current?.click()}
+                        style={{ cursor: isUploading ? 'not-allowed' : 'pointer', opacity: isUploading ? 0.7 : 1 }}
+                    >
                         <div style={{ background: 'rgba(99, 102, 241, 0.1)', padding: '20px', borderRadius: '50%', color: 'var(--primary)', marginBottom: '10px' }}>
-                            <Upload size={32} />
+                            {isUploading ? <Loader2 className="animate-spin" size={32} /> : <Upload size={32} />}
                         </div>
                         <div style={{ textAlign: 'center' }}>
-                            <h3 style={{ fontSize: '1.25rem', marginBottom: '4px' }}>Dateien hochladen</h3>
-                            <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>Wähle zuerst ein Projekt, dann lade Dateien hoch.</p>
+                            <h3 style={{ fontSize: '1.25rem', marginBottom: '4px' }}>
+                                {isUploading ? 'Wird hochgeladen...' : 'Dateien hochladen'}
+                            </h3>
+                            <p style={{ color: '#94a3b8', fontSize: '0.9rem' }}>
+                                {selectedProjectId
+                                    ? `Hochladen in: ${projects.find(p => p.project_id === selectedProjectId)?.project_name}`
+                                    : 'Wähle zuerst ein Projekt, dann lade Dateien hoch.'}
+                            </p>
                         </div>
                     </div>
 
@@ -191,14 +263,19 @@ export default function ProjectsPage() {
 
                     <div className={styles.grid}>
                         {projects.map((proj) => (
-                            <div key={proj.project_id} className={`${styles.card} glass`}>
+                            <div
+                                key={proj.project_id}
+                                className={`${styles.card} glass ${selectedProjectId === proj.project_id ? styles.selectedCard : ''}`}
+                                onClick={() => setSelectedProjectId(proj.project_id)}
+                                style={{ border: selectedProjectId === proj.project_id ? '2px solid var(--primary)' : '' }}
+                            >
                                 <div className={styles.cardHeader}>
                                     <div className={styles.iconBox}>
                                         <Library size={24} />
                                     </div>
                                     <div style={{ display: 'flex', gap: '8px' }}>
                                         <button
-                                            onClick={() => handleDeleteProject(proj.project_id)}
+                                            onClick={(e) => handleDeleteProject(e, proj.project_id)}
                                             style={{ color: '#94a3b8', background: 'none', border: 'none', cursor: 'pointer' }}
                                         >
                                             <Trash2 size={18} />
