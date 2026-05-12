@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import SecretStr, DirectoryPath
+from pydantic import SecretStr, Field
 from typing import List, Optional
 import os
 
@@ -10,82 +10,69 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-    APP_NAME: str = "Mini-RAG"
+    # ── Application ──────────────────────────────────────────────
+    APP_NAME: str = "mini-RAG"
     APP_VERSION: str = "1.0.0"
-    
-    # German Language Default
-    PRIMARY_LANG: str = "de"
-    DEFAULT_LANG: str = "de"
+    APP_ENV: str = "development"
+    APP_SECRET_KEY: str = "CHANGE_ME_32CHARS"
+    ALLOWED_ORIGINS: str = "http://localhost:3000"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
+    FILE_ALLOWED_TYPES: List[str] = ["text/plain", "application/pdf"]
+    FILE_MAX_SIZE: int = 10 # MB
+    FILE_DEFAULT_CHUNK_SIZE: int = 512000 # 512KB
 
-    # Security
-    JWT_SECRET_KEY: SecretStr
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    # ── Database ─────────────────────────────────────────────────
+    # We use DATABASE_URL as the primary source of truth per PRD
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/grag"
 
-    # OpenAI / LLM
-    OPENAI_API_KEY: Optional[SecretStr] = None
-    OPENAI_API_URL: Optional[str] = None
-    COHERE_API_KEY: Optional[SecretStr] = None
-    
-    # OpenAI Models
-    OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
-    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    # ── Redis ────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379/0"
 
-    # File Ingestion
-    FILE_ALLOWED_TYPES: List[str] = [".txt", ".pdf"]
-    FILE_MAX_SIZE: int = 10_000_000  # 10MB
-    FILE_DEFAULT_CHUNK_SIZE: int = 512
-    
-    # Postgres
-    POSTGRES_USERNAME: str
-    POSTGRES_PASSWORD: SecretStr
-    POSTGRES_HOST: str
-    POSTGRES_PORT: int = 5432
-    POSTGRES_MAIN_DATABASE: str
+    # ── Celery ───────────────────────────────────────────────────
+    CELERY_BROKER_URL: str = "amqp://guest:guest@localhost:5672//"
+    CELERY_RESULT_BACKEND: str = "redis://localhost:6379/1"
+    CELERY_TASK_SERIALIZER: str = "json"
+    CELERY_TASK_TIME_LIMIT: int = 300
+    CELERY_WORKER_CONCURRENCY: int = 4
 
-    @property
-    def SQLALCHEMY_DATABASE_URI(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.POSTGRES_USERNAME}:"
-            f"{self.POSTGRES_PASSWORD.get_secret_value()}@"
-            f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_MAIN_DATABASE}"
-        )
+    # ── LLM Providers ────────────────────────────────────────────
+    GENERATION_BACKEND: str = "openai"
+    GENERATION_MODEL_ID: str = "gpt-4o-mini"
+    EMBEDDING_BACKEND: str = "openai"
+    EMBEDDING_MODEL_ID: str = "text-embedding-3-small"
+    EMBEDDING_MODEL_SIZE: int = 1536
+    OPENAI_API_KEY: Optional[str] = None
+    COHERE_API_KEY: Optional[str] = None
 
+    # ── Vector DB ────────────────────────────────────────────────
+    VECTORDB_BACKEND: str = "pgvector"
+    QDRANT_URL: Optional[str] = None
+    QDRANT_API_KEY: Optional[str] = None
+
+    # ── Observability ────────────────────────────────────────────
+    SENTRY_DSN: Optional[str] = None
+    LOG_LEVEL: str = "INFO"
+
+    # ── Rate Limiting ────────────────────────────────────────────
+    RATE_LIMIT_PER_MINUTE_FREE: int = 20
+    RATE_LIMIT_PER_MINUTE_PRO: int = 200
+
+    # ── Flower ───────────────────────────────────────────────────
+    FLOWER_USER: str = "admin"
+    FLOWER_PASSWORD: str = "CHANGE_ME"
+
+    # Backward compatibility properties if needed
     @property
     def SQLALCHEMY_DATABASE_URI_SYNC(self) -> str:
-        return (
-            f"postgresql://{self.POSTGRES_USERNAME}:"
-            f"{self.POSTGRES_PASSWORD.get_secret_value()}@"
-            f"{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_MAIN_DATABASE}"
-        )
+        return self.DATABASE_URL.replace("+asyncpg", "")
 
-    # Generation Config
-    GENERATION_BACKEND: str
-    GENERATION_MODEL_ID: str = "gpt-3.5-turbo"
-    GENERATION_DEFAULT_MAX_TOKENS: int = 512
-    GENERATION_DEFAULT_TEMPERATURE: float = 0.5
+    @property
+    def PRIMARY_LANG(self) -> str:
+        return "de"
 
-    # Embedding Config
-    EMBEDDING_BACKEND: str
-    EMBEDDING_MODEL_ID: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-    EMBEDDING_MODEL_SIZE: int = 768
-
-    # Vector DB
-    VECTOR_DB_BACKEND: str
-    VECTOR_DB_PATH: str = "chroma_db_data"
-    VECTOR_DB_DISTANCE_METHOD: str = "cosine"
-    VECTOR_DB_PGVEC_INDEX_THRESHOLD: int = 100
-
-    # Celery
-    CELERY_BROKER_URL: str
-    CELERY_RESULT_BACKEND: str
-    CELERY_TASK_SERIALIZER: str = "json"
-    CELERY_TASK_TIME_LIMIT: int = 600
-    CELERY_WORKER_CONCURRENCY: int = 2
-    CELERY_FLOWER_PASSWORD: Optional[SecretStr] = None
-
-    # Freemium Quotas
-    FREE_TIER_DAILY_MESSAGE_LIMIT: int = 20
-    FREE_TIER_MAX_ASSETS: int = 5
+    @property
+    def DEFAULT_LANG(self) -> str:
+        return "de"
 
 def get_settings() -> Settings:
     return Settings()

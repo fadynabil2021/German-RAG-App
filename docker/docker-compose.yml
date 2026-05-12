@@ -103,17 +103,18 @@ services:
       - "5400:5432"
     volumes:
       - 'pgvector:/var/lib/postgresql/data'
+      - ./init-scripts:/docker-entrypoint-initdb.d
     env_file:
       - ./env/.env.postgres
     networks:
       - backend
     restart: always
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      test: [ "CMD-SHELL", "pg_isready -U postgres && psql -U postgres -d minirag -c \"SELECT 1 FROM pg_extension WHERE extname='vector'\"" ]
       interval: 5s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      retries: 10
+      start_period: 15s
 
   # Qdrant (VectorDB)
   qdrant:
@@ -213,8 +214,10 @@ services:
     restart: always
     healthcheck:
       test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
+      interval: 10s
       timeout: 10s
       retries: 5
+      start_period: 30s
 
   # Redis (Results Backend & Cache)
   redis:

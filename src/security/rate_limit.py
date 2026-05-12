@@ -1,62 +1,67 @@
-from fastapi import Request, HTTPException, status
+import time
+from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
-import logging
+from starlette.responses import JSONResponse
+import structlog
 from core.container import container
+from redis.asyncio import Redis
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+LIMITS = {
+    "free": int(container.settings.RATE_LIMIT_PER_MINUTE_FREE),
+    "pro": int(container.settings.RATE_LIMIT_PER_MINUTE_PRO)
+}
+
+async def check_rate(user_id: str, tier: str, redis_client: Redis):
+    """
+    Per-user rate limiting logic as per PRD 5.7.
+    Called as a dependency or within specific routes.
+    """
+    key = f"rl:{user_id}:{int(time.time())//60}"
+    try:
+        count = await redis_client.incr(key)
+        if count == 1:
+            await redis_client.expire(key, 65)
+        
+        limit = LIMITS.get(tier, LIMITS["free"])
+        if count > limit:
+            logger.warning("Rate limit exceeded", user_id=user_id, tier=tier)
+            return False
+        return True
+    except Exception as e:
+        logger.error("Redis Rate Limit error", error=str(e))
+        # Fail open
+        return True
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """
-    Redis-based rate limiting middleware.
-    Shared across workers and scalable.
+    Fallback IP-based rate limiting middleware for non-authenticated routes.
     """
     def __init__(self, app, requests_per_minute: int = 60):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
 
     async def dispatch(self, request: Request, call_next):
-        # We try to get the redis client from our container
-        redis_client = container.redis_client
-        
-        if redis_client:
-            try:
-                # Basic connectivity check
-                await redis_client.ping()
-            except Exception:
-                logger.error("Redis is down - bypassing rate limit")
-                redis_client = None
-
-        if not redis_client:
-            # Fallback for local dev or if redis is down
+        # Skip rate limiting for static files or documentation if needed
+        if request.url.path.startswith("/docs") or request.url.path.startswith("/openapi.json"):
             return await call_next(request)
 
+        redis_client = container.redis_client
         client_ip = request.client.host
-        # Use a sliding window with Redis or a simple counter per minute
-        key = f"rate_limit:{client_ip}:{int(time.time() / 60)}"
+        key = f"rl:ip:{client_ip}:{int(time.time() / 60)}"
         
         try:
-            current_usage = await redis_client.get(key)
-            if current_usage and int(current_usage) >= self.requests_per_minute:
-                logger.warning(f"Rate limit exceeded for IP: {client_ip}")
-                raise HTTPException(
+            count = await redis_client.incr(key)
+            if count == 1:
+                await redis_client.expire(key, 65)
+            
+            if count > self.requests_per_minute:
+                return JSONResponse(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Too many requests. Please try again later."
+                    content={"detail": "Too many requests. Please try again later."}
                 )
-            
-            # Increment and set expiry
-            pipeline = redis_client.pipeline()
-            pipeline.incr(key)
-            pipeline.expire(key, 60)
-            await pipeline.execute()
-            
-        except HTTPException:
-            raise
         except Exception as e:
-            logger.error(f"Redis Rate Limit error: {e}")
-            # Fail open in case of Redis failure to not block API
-            return await call_next(request)
+            logger.error("IP Rate Limit error", error=str(e))
             
-        response = await call_next(request)
-        return response
-
-import time # For the key generation
+        return await call_next(request)

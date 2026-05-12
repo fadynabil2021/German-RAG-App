@@ -8,7 +8,7 @@ from models.db_schemes.minirag.schemes.celery_task_execution import CeleryTaskEx
 class IdempotencyManager:
 
     def __init__(self, db_client, db_engine):
-        self.db_client = db_client
+        self.db_client = db_client # This is an async_sessionmaker
         self.db_engine = db_engine
 
     def create_args_hash(self, task_name: str, task_args: dict):
@@ -29,40 +29,33 @@ class IdempotencyManager:
             task_args=task_args,
             celery_task_id=celery_task_id,
             status='PENDING',
-            started_at=datetime.utcnow()
+            started_at=datetime.now(timezone.utc)
         )
         
-        session = self.db_client()
-        try:
+        async with self.db_client() as session:
             session.add(task_record)
             await session.commit()
             await session.refresh(task_record)
             return task_record
-        finally:
-            await session.close()
 
     async def update_task_status(self, execution_id: int, status: str, result: dict = None):
         """Update task status and result."""
-        session = self.db_client()
-        try:
+        async with self.db_client() as session:
             task_record = await session.get(CeleryTaskExecution, execution_id)
             if task_record:
                 task_record.status = status
                 if result:
                     task_record.result = result
                 if status in ['SUCCESS', 'FAILURE']:
-                    task_record.completed_at = datetime.utcnow()
+                    task_record.completed_at = datetime.now(timezone.utc)
                 await session.commit()
-        finally:
-            await session.close()
 
     async def get_existing_task(self, task_name: str, 
-                                task_args: dict, celery_task_id: str) -> CeleryTaskExecution:
+                                task_args: dict, celery_task_id: str) -> Optional[CeleryTaskExecution]:
         """Check if task with same name and args already exists."""
         args_hash = self.create_args_hash(task_name, task_args)
         
-        session = self.db_client()
-        try:
+        async with self.db_client() as session:
             stmt = select(CeleryTaskExecution).where(
                 CeleryTaskExecution.celery_task_id == celery_task_id,
                 CeleryTaskExecution.task_name == task_name,
@@ -70,56 +63,44 @@ class IdempotencyManager:
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
-        finally:
-            await session.close()
 
     async def should_execute_task(self, task_name: str, task_args: dict,
                                   celery_task_id: str, 
                                   task_time_limit: int = 600) -> Tuple[bool, Optional[CeleryTaskExecution]]:
         """
         Check if task should be executed or return existing result.
-        Args:
-            task_time_limit: Time limit in seconds after which a stuck task can be re-executed
-        Returns (should_execute, existing_task_or_none)
         """
         existing_task = await self.get_existing_task(task_name, task_args, celery_task_id)
         
         if not existing_task:
             return True, None
             
-        # Don't execute if task is already completed successfully
         if existing_task.status == 'SUCCESS':
             return False, existing_task
             
-        # Check if task is stuck (running longer than time limit + 60 seconds)
         if existing_task.status in ['PENDING', 'STARTED', 'RETRY']:
             if existing_task.started_at:
-                time_elapsed = (datetime.utcnow() - existing_task.started_at).total_seconds()
-                time_gap = 60  # 60 seconds grace period
+                # Ensure started_at is timezone-aware
+                started_at = existing_task.started_at
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=timezone.utc)
+                
+                time_elapsed = (datetime.now(timezone.utc) - started_at).total_seconds()
+                time_gap = 60
                 if time_elapsed > (task_time_limit + time_gap):
-                    return True, existing_task  # Task is stuck, allow re-execution
-            return False, existing_task  # Task is still running within time limit
+                    return True, existing_task
+            return False, existing_task
             
-        # Re-execute if previous task failed
         return True, existing_task
     
     async def cleanup_old_tasks(self, time_retention: int = 86400) -> int:
-        """
-        Delete old task records older than time_retention seconds.
-        Args:
-            time_retention: Time in seconds to retain tasks (default: 86400 = 24 hours)
-        Returns:
-            Number of deleted records
-        """
+        """Delete old task records older than time_retention seconds."""
         cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=time_retention)
         
-        session = self.db_client()
-        try:
+        async with self.db_client() as session:
             stmt = delete(CeleryTaskExecution).where(
                 CeleryTaskExecution.created_at < cutoff_time
             )
             result = await session.execute(stmt)
             await session.commit()
             return result.rowcount
-        finally:
-            await session.close()

@@ -1,0 +1,1107 @@
+PRODUCT REQUIREMENTS DOCUMENT
+German RAG App — Full Bug Fix & Cloud Deployment
+Field
+Value
+Document ID
+PRD-GRAG-2026-001
+Project
+German Learning RAG SaaS — fadynabil2021/German-RAG-App
+Version
+1.0.0
+Date
+May 12, 2026
+Author
+Team Lead Engineering
+Status
+APPROVED FOR IMPLEMENTATION
+Target Stack
+FastAPI → Render · Next.js → Vercel · PostgreSQL (Neon) · Redis (Upstash)
+Priority
+P0 — Critical (Deployment Blocked)
+1. Executive Summary
+The German RAG App is an AI-powered German language learning SaaS platform built on FastAPI (Python), Next.js (TypeScript), PostgreSQL with pgvector, Celery/RabbitMQ, Redis, and Qdrant. A comprehensive automated code review dated May 12, 2026 revealed that the repository is in an undeployable state: all 10 recent CI/CD pipeline runs have failed, and multiple foundational files are absent entirely.
+This PRD defines the complete scope of work required to (a) remediate every identified bug and configuration defect, (b) replace the Kubernetes-centric deployment with a leaner Vercel + Render cloud stack suitable for a SaaS MVP, and (c) establish a reliable CI/CD pipeline that gates every merge on green tests.
+Category
+Count
+Worst Impact
+Critical Bugs
+12
+Deployment fully blocked
+High Priority
+8
+Security vulnerabilities / data loss risk
+Medium Priority
+15
+Reliability / observability gaps
+Missing Files
+9
+Build, Docker, K8s, env templates all absent
+2. Scope & Objectives
+2.1 In-Scope
+Create all missing files: requirements.txt, frontend/package.json, frontend/Dockerfile, all .env.example templates, alembic.ini in the correct location.
+Fix every identified bug category: CORS, JWT security, Celery config, database migration path, pgvector extension init, Flower credentials, Sentry integration, duplicate imports, rate-limit hard-coding, health-check coverage, and logging strategy.
+Rewrite CI/CD pipeline for GitHub Actions: lint → test → build → deploy gates.
+Replace Kubernetes deployment with Vercel (frontend) + Render (backend + workers + managed services).
+Produce .env.example files for every service tier.
+Deliver integration and unit test scaffolding reaching ≥70% line coverage on critical paths.
+2.2 Out-of-Scope
+Feature additions beyond what is already in the roadmap (Phase 7).
+Mobile native applications.
+Paid subscription billing integration (Stripe) — deferred to Phase 8.
+3. Bug Catalogue
+All identified defects are classified by severity. CRITICAL issues block any deployment. HIGH issues create security or reliability risk in production. MEDIUM issues degrade observability or developer experience. Every bug has a corresponding fix requirement in Section 5.
+ID
+Sev
+Title
+Category
+Impact
+Fix
+BUG-001
+CRITICAL
+Missing src/requirements.txt
+Build & CI/CD
+CI pipeline fails at pip install; Docker image cannot be built; local setup falls back to unpinned packages.
+Create requirements.txt with pinned versions for every dependency.
+BUG-002
+CRITICAL
+Missing frontend/package.json
+Build & CI/CD
+npm install fails. Frontend cannot be built or containerised.
+Create package.json with Next.js 14, axios, jwt-decode, tailwindcss, and all transitive deps.
+BUG-003
+CRITICAL
+Missing frontend/Dockerfile
+Build & CI/CD
+CI step docker build -f frontend/Dockerfile fails unconditionally.
+Create multi-stage Dockerfile: node:18-alpine builder → node:18-alpine runner.
+BUG-004
+CRITICAL
+Missing .env.example files (6 files)
+Configuration
+Docker Compose references ./env/.env.app, .env.postgres, .env.grafana, .env.rabbitmq. All absent. All services fail to start.
+Create all six .env.example files with documented keys, types, and safe defaults.
+BUG-005
+CRITICAL
+CORS allow_origins="*" with allow_credentials=True
+Security
+Combining wildcard origin with credentials is rejected by browsers per the CORS spec (CORS error in browser) and creates CSRF vector.
+Read ALLOWED_ORIGINS from env; reject wildcard when credentials=True.
+BUG-006
+CRITICAL
+Alembic migration path inconsistency
+Database
+README says src/models/db_schemes/minirag; Dockerfile uses /app/models/db_schemes/minirag. Entrypoint navigates to wrong path; migrations never run; container exits immediately.
+Standardise on /app/models/db_schemes/minirag in all contexts; add db connectivity check before alembic upgrade head.
+BUG-007
+CRITICAL
+pgvector extension not initialised
+Database
+pg_isready health check passes before CREATE EXTENSION vector runs. First vector operation crashes app.
+Add init.sql mounted as Docker entrypoint init-script; add SQLAlchemy startup event that calls CREATE EXTENSION IF NOT EXISTS vector.
+BUG-008
+CRITICAL
+No pytest tests — CI fails at pytest step
+CI/CD
+pytest exits with code 5 (no tests collected), failing the CI job for every push.
+Add tests/conftest.py and minimal unit + integration tests; configure pytest.ini for discovery.
+BUG-009
+CRITICAL
+Undefined Celery env vars: CELERY_BROKER_URL, CELERY_RESULT_BACKEND, CELERY_TASK_SERIALIZER, etc.
+Configuration
+Celery app raises AttributeError or KeyError at import time, crashing every worker and beat container on startup.
+Add all Celery keys to settings model with defaults and env documentation.
+BUG-010
+CRITICAL
+Missing Kubernetes manifests for deploy job
+CI/CD / Infra
+CI deploy step runs kubectl apply -f k8s/*.yaml; files incomplete / absent. Deploy job always fails.
+Replace K8s deployment with Vercel + Render strategy (see Section 7). Remove kubectl steps from CI.
+BUG-011
+CRITICAL
+LLM provider env vars undefined (GENERATION_BACKEND, EMBEDDING_BACKEND, etc.)
+Configuration
+container.llm_provider_factory.create() raises AttributeError at startup; app never finishes loading.
+Add all LLM env vars to settings; raise descriptive error with missing var name at startup.
+BUG-012
+CRITICAL
+Flower reads .env without fallback — KeyError on missing CELERY_FLOWER_PASSWORD
+Security / Config
+flowerconfig.py: basic_auth crashes if .env missing or key absent. Flower cannot start.
+Use os.environ.get with explicit error; validate at startup; store secret in Render Secret Files.
+BUG-013
+HIGH
+Duplicate import: RateLimitMiddleware imported twice in main.py
+Code Quality
+No runtime crash but confusing; static analysers fail; PEP8 violation blocks flake8 gate.
+Remove the second import statement.
+BUG-014
+HIGH
+JWT algorithm not specified — algorithm confusion attack vector
+Security
+python-jose defaults accept multiple algorithms. An attacker can forge a token by switching to HS256 with the public key as the secret.
+Explicitly pass algorithms=["HS256"] (or RS256 if using asymmetric keys) to jose.jwt.decode().
+BUG-015
+HIGH
+Hard-coded rate limit (100 req/min) — no per-user differentiation
+Reliability
+Free and pro users share the same 100 req/min ceiling. Abusive free user can degrade pro users. Cannot tune without code change.
+Read limit from env; implement per-user token-bucket in Redis keyed on user_id.
+BUG-016
+HIGH
+Sentry integration commented out
+Observability
+Error tracking is entirely absent in production. Bugs go unnoticed until user reports.
+Uncomment and configure Sentry via SENTRY_DSN env; set traces_sample_rate=0.2; add before_send to strip PII.
+BUG-017
+HIGH
+Entrypoint.sh: no DB readiness check before alembic upgrade head
+Reliability
+Container can start before PostgreSQL accepts connections; alembic fails; container crashes; Docker Compose may not restart it.
+Add wait-for-it.sh or a Python TCP probe loop before running migrations.
+BUG-018
+HIGH
+RabbitMQ healthcheck missing interval — default 30s × 5 retries = 150s wait
+Reliability
+Celery workers may time out waiting for RabbitMQ to be declared healthy, causing cascading startup failures.
+Add interval: 10s to RabbitMQ healthcheck; add start_period: 30s.
+BUG-019
+HIGH
+Docker image not pushed to registry before kubectl set image
+CI/CD
+K8s cannot pull the locally-built image. Deployment always fails with ImagePullBackOff.
+Resolved by migrating to Render (auto-deploy from GitHub). Render builds and hosts the image.
+BUG-020
+HIGH
+quick-start.sh fallback pip installs without version pins
+Dependency
+Non-reproducible environments across developer machines; potential incompatible transitive dependency resolution.
+Remove the fallback; always require requirements.txt; fail fast with a clear error message.
+BUG-021
+MEDIUM
+Python version mismatch: README says 3.10+, CI uses 3.11, Dockerfile uses 3.10
+CI/CD
+Potential behaviour differences (match-statement exhaustiveness, typing changes). Inconsistency causes confusion.
+Pin to Python 3.11 everywhere: README, CI, Dockerfile, conda env spec.
+BUG-022
+MEDIUM
+No pgvector extension health check — only pg_isready
+Database
+App may fail on first vector query even after DB health passes.
+Add custom healthcheck: pg_isready && psql -c "SELECT 1 FROM pg_extension WHERE extname='vector'"
+BUG-023
+MEDIUM
+Logging setup opaque — format, destination, rotation unknown
+Observability
+No structured logging (JSON). Log aggregation (Datadog, Papertrail) not possible without JSON format.
+Replace setup_logging() with structlog in JSON mode; configure log level from env.
+BUG-024
+MEDIUM
+No input validation on /api/v1/nlp/index/answer/{project_id}
+Security
+project_id path param not validated as UUID; potential path traversal or injection if passed to raw SQL.
+Add Pydantic UUID validator on path param; use parameterised SQLAlchemy queries exclusively.
+BUG-025
+MEDIUM
+No retry/fault-tolerance on LLM API calls
+Reliability
+OpenAI/Cohere transient 429 or 5xx errors propagate directly to user as 500.
+Wrap LLM calls with tenacity retry (max_attempts=3, wait_exponential, retry_if_exception_type=RateLimitError).
+BUG-026
+MEDIUM
+Hard-coded admin username in flowerconfig.py
+Security
+Predictable admin credential is a brute-force target.
+Read both username and password from env.
+BUG-027
+MEDIUM
+Missing Alembic env.py async target_metadata configuration
+Database
+If using async SQLAlchemy, alembic env.py must use async engine. Synchronous run_migrations_online() silently skips tables.
+Verify env.py uses run_async_migrations() with asyncio.run(); add check in CI.
+BUG-028
+MEDIUM
+Celery beat tasks undefined — no schedule configured
+Reliability
+celery_app.py references tasks.maintenance but no beat_schedule is defined. Periodic tasks never run.
+Define beat_schedule in Celery config with cron expressions for maintenance tasks.
+4. Target Architecture — Vercel + Render
+4.1 Architecture Diagram
+Text-based System Architecture
+┌─────────────────────────────────────────────────────────────┐
+│                    VERCEL (Edge Network)                     │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Next.js 14 (App Router)                             │   │
+│  │  • SSR / SSG pages     • JWT-intercepted Axios       │   │
+│  │  • Tailwind CSS        • BackendStatusBanner          │   │
+│  │  • DevDebugPanel (dev) • Auth Context Provider       │   │
+│  └──────────────┬───────────────────────────────────────┘   │
+└─────────────────┼───────────────────────────────────────────┘
+                  │ HTTPS / REST + JWT Bearer
+┌─────────────────▼───────────────────────────────────────────┐
+│                 RENDER (Web Service)                         │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  FastAPI (uvicorn, 2 workers)                        │   │
+│  │  ├── /api/v1/auth        JWT issue / refresh         │   │
+│  │  ├── /api/v1/projects    CRUD                        │   │
+│  │  ├── /api/v1/nlp         RAG query endpoint          │   │
+│  │  ├── /api/v1/dashboard   Metrics                     │   │
+│  │  └── /health             Liveness / readiness        │   │
+│  │  Middleware: CORSMiddleware (allowlist) · Rate Limiter│   │
+│  │  Security:  JWT (HS256) · Prompt sanitizer · Quotas  │   │
+│  └────────┬───────────────┬──────────────────────┬──────┘   │
+└───────────┼───────────────┼──────────────────────┼──────────┘
+            │               │                      │
+    ┌───────▼──────┐  ┌────▼───────┐  ┌──────────▼──────────┐
+    │ Neon Postgres│  │Upstash Redis│  │  Render Background  │
+    │ pgvector 0.7 │  │ TLS 6379   │  │  Worker (Celery)     │
+    │ Alembic mig. │  │ Rate limit │  │  + Celery Beat       │
+    │ pgbouncer conn│  │ Sessions   │  │  tasks.file_processing│
+    └──────────────┘  └────────────┘  │  tasks.data_indexing │
+                                       │  tasks.maintenance   │
+    ┌──────────────────────────────────┴──────────────────────┐
+    │  Qdrant Cloud (managed) — vector store for RAG          │
+    │  OR pgvector on Neon (single-service fallback)          │
+    └─────────────────────────────────────────────────────────┘
+4.2 Service Mapping
+Component
+Original
+Target
+Tier
+Cost (est.)
+Frontend
+K8s Deployment
+Vercel Pro
+Managed
+$20/mo
+FastAPI
+K8s Deployment
+Render Web Service
+Container
+$25/mo
+Celery Worker
+K8s Deployment
+Render Background Worker
+Container
+$25/mo
+Celery Beat
+K8s Deployment
+Render Cron Job
+Container
+$7/mo
+PostgreSQL
+pgvector/pgvector Docker
+Neon Postgres (serverless)
+Managed
+$19/mo
+Redis
+redis:alpine Docker
+Upstash Redis
+Serverless
+$0–10/mo
+RabbitMQ
+rabbitmq:management Docker
+CloudAMQP (Free Tier → Lemur)
+Managed
+$0–19/mo
+Vector DB
+Qdrant Docker / pgvector
+Qdrant Cloud (Free 1GB)
+Managed
+$0+
+5. Functional & Non-Functional Requirements
+5.1 FR-01 — Dependency Manifest
+Acceptance Criteria
+src/requirements.txt exists with every package pinned to a concrete version.
+frontend/package.json exists with Next.js 14, React 18, TypeScript 5, Tailwind 3, Axios, jwt-decode, and all dev deps.
+A top-level package-lock.json is committed so npm ci is deterministic.
+pip install -r src/requirements.txt succeeds in a clean Python 3.11 venv within 5 minutes.
+Required src/requirements.txt (pinned)
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+python-dotenv==1.0.1
+pydantic-settings==2.2.1
+SQLAlchemy[asyncio]==2.0.30
+asyncpg==0.29.0
+alembic==1.13.1
+psycopg2-binary==2.9.9
+pgvector==0.2.5
+openai==1.30.1
+cohere==5.5.1
+langchain==0.2.1
+langchain-openai==0.1.8
+langchain-cohere==0.1.4
+qdrant-client==1.9.1
+celery[redis]==5.4.0
+redis==5.0.4
+flower==2.0.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+prometheus-client==0.20.0
+starlette-exporter==0.17.1
+fastapi-health==0.4.0
+structlog==24.1.0
+sentry-sdk[fastapi]==2.3.1
+tenacity==8.3.0
+nltk==3.8.1
+pytest==8.2.0
+pytest-asyncio==0.23.7
+httpx==0.27.0
+flake8==7.0.0
+black==24.4.2
+mypy==1.10.0
+5.2 FR-02 — Environment Variable Schema
+Every service must read configuration exclusively from environment variables. No hard-coded secrets or connection strings are permitted in source files. Each variable must be declared in both the Pydantic settings model and the .env.example file.
+Required Variables — Backend (src/.env.example)
+# ── Application ──────────────────────────────────────────────
+APP_ENV=development                # development | staging | production
+APP_SECRET_KEY=CHANGE_ME_32CHARS   # Used for JWT signing (HS256)
+ALLOWED_ORIGINS=http://localhost:3000  # Comma-separated list
+# ── Database ─────────────────────────────────────────────────
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/grag
+# ── Redis ────────────────────────────────────────────────────
+REDIS_URL=redis://:password@localhost:6379/0
+# ── Celery ───────────────────────────────────────────────────
+CELERY_BROKER_URL=amqp://user:pass@localhost:5672//
+CELERY_RESULT_BACKEND=redis://:password@localhost:6379/1
+CELERY_TASK_SERIALIZER=json
+CELERY_TASK_TIME_LIMIT=300
+CELERY_WORKER_CONCURRENCY=4
+# ── LLM Providers ────────────────────────────────────────────
+GENERATION_BACKEND=openai          # openai | cohere
+GENERATION_MODEL_ID=gpt-4o-mini
+EMBEDDING_BACKEND=openai
+EMBEDDING_MODEL_ID=text-embedding-3-small
+EMBEDDING_MODEL_SIZE=1536
+OPENAI_API_KEY=sk-...
+COHERE_API_KEY=                    # Optional
+# ── Vector DB ────────────────────────────────────────────────
+VECTORDB_BACKEND=qdrant            # qdrant | pgvector
+QDRANT_URL=https://your-cluster.qdrant.io
+QDRANT_API_KEY=
+# ── Observability ────────────────────────────────────────────
+SENTRY_DSN=                        # Leave blank to disable
+LOG_LEVEL=INFO
+# ── Rate Limiting ────────────────────────────────────────────
+RATE_LIMIT_PER_MINUTE_FREE=20
+RATE_LIMIT_PER_MINUTE_PRO=200
+# ── Flower ───────────────────────────────────────────────────
+FLOWER_USER=admin
+FLOWER_PASSWORD=CHANGE_ME
+5.3 FR-03 — CORS Fix
+Before (Bug)
+allow_origins=["*"],  allow_credentials=True  # ❌ Spec violation + CSRF risk
+After (Fix)
+allowed = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in allowed],
+    allow_credentials=True, allow_methods=["GET","POST","PUT","DELETE"],
+    allow_headers=["Authorization","Content-Type"])
+5.4 FR-04 — JWT Security
+Fix
+# jose/jwt.py — decode call
+payload = jwt.decode(token, settings.APP_SECRET_KEY, algorithms=["HS256"])
+# ❌ Never: algorithms=None or omitting the parameter
+5.5 FR-05 — Database Startup Sequence
+docker/minirag/entrypoint.sh (fixed)
+#!/bin/bash
+set -euo pipefail
+echo "[entrypoint] Waiting for PostgreSQL..."
+until python - <<EOF
+import asyncpg, asyncio, os
+asyncio.run(asyncpg.connect(os.environ["DATABASE_URL"].replace("+asyncpg","")))
+EOF
+do
+  echo "[entrypoint] DB not ready — retrying in 3s"; sleep 3
+done
+echo "[entrypoint] Running Alembic migrations..."
+cd /app/models/db_schemes/minirag
+alembic upgrade head
+cd /app
+exec "$@"
+5.6 FR-06 — pgvector Extension Init
+-- docker/init-scripts/01_pgvector.sql
+CREATE EXTENSION IF NOT EXISTS vector;
+# docker-compose.yml — pgvector service
+volumes:
+  - ./init-scripts:/docker-entrypoint-initdb.d
+5.7 FR-07 — Per-User Rate Limiting
+# security/rate_limit.py
+LIMITS = {"free": int(settings.RATE_LIMIT_PER_MINUTE_FREE),
+          "pro":  int(settings.RATE_LIMIT_PER_MINUTE_PRO)}
+async def check_rate(user_id: str, tier: str, redis: Redis):
+    key = f"rl:{user_id}:{int(time.time())//60}"
+    count = await redis.incr(key)
+    if count == 1: await redis.expire(key, 65)
+    if count > LIMITS[tier]: raise HTTPException(429)
+5.8 FR-08 — LLM Retry with Tenacity
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+@retry(stop=stop_after_attempt(3),
+       wait=wait_exponential(multiplier=1, min=2, max=10),
+       retry=retry_if_exception_type((RateLimitError, APIConnectionError)))
+async def call_llm(prompt: str) -> str: ...
+5.9 NFR-01 — Performance
+RAG query p95 latency < 3 seconds under 50 concurrent users (measured with Locust).
+File indexing (5MB PDF) completes within 60 seconds via Celery background task.
+API cold-start on Render < 30 seconds.
+5.10 NFR-02 — Security
+No secrets committed to git (enforced by gitleaks in pre-commit hook).
+All HTTP traffic enforces TLS (Render and Vercel provide this by default).
+JWT expiry: access token 15 min; refresh token 7 days; rotation on use.
+Rate limit headers (X-RateLimit-*) returned on every API response.
+6. CI/CD Pipeline — GitHub Actions
+6.1 Pipeline Overview
+The redesigned pipeline follows a strict quality gate model: no stage proceeds if a prior stage fails. The deploy stage only runs on pushes to main.
+┌──────────┐   ┌───────────┐   ┌──────────────┐   ┌───────────────────┐
+│ lint     │──▶│ test      │──▶│ build-images │──▶│ deploy            │
+│ flake8   │   │ pytest    │   │ backend:sha  │   │ Render deploy hook│
+│ black    │   │ asyncio   │   │ frontend:sha │   │ Vercel CLI push   │
+│ mypy     │   │ ≥70% cov  │   │ push to GHCR │   │ smoke test /health│
+└──────────┘   └───────────┘   └──────────────┘   └───────────────────┘
+6.2 Full Workflow File — .github/workflows/ci-cd.yml
+name: G-RAG CI/CD Pipeline
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BACKEND: ghcr.io/${{ github.repository }}/backend
+  IMAGE_FRONTEND: ghcr.io/${{ github.repository }}/frontend
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "18"
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: pip install flake8 black mypy
+      - run: flake8 src --count --select=E9,F63,F7,F82 --max-line-length=120
+      - run: black --check src
+      - run: mypy src --ignore-missing-imports
+  test:
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.7.0-pg16
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: grag_test }
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-retries 10
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ env.PYTHON_VERSION }}" }
+      - run: pip install -r src/requirements.txt
+      - run: cd src && pytest tests/ -v --cov=. --cov-report=xml --cov-fail-under=70
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:test@localhost:5432/grag_test
+          REDIS_URL: redis://localhost:6379/0
+          APP_SECRET_KEY: ci-test-secret
+          GENERATION_BACKEND: openai
+          OPENAI_API_KEY: sk-test
+  build-backend:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: ${{ github.actor }},
+                password: ${{ secrets.GITHUB_TOKEN }} }
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/minirag/Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_BACKEND }}:${{ github.sha }},${{ env.IMAGE_BACKEND }}:latest
+  build-frontend:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    permissions: { contents: read, packages: write }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with: { registry: ghcr.io, username: ${{ github.actor }},
+                password: ${{ secrets.GITHUB_TOKEN }} }
+      - uses: docker/build-push-action@v5
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: ${{ env.IMAGE_FRONTEND }}:${{ github.sha }},${{ env.IMAGE_FRONTEND }}:latest
+  deploy:
+    needs: [build-backend, build-frontend]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render deploy (backend)
+        run: |
+          curl -s -X POST "${{ secrets.RENDER_DEPLOY_HOOK_BACKEND }}"
+      - name: Deploy frontend to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+      - name: Smoke test
+        run: |
+          sleep 30
+          curl -f ${{ secrets.BACKEND_URL }}/health || exit 1
+7. Deployment Plan — Vercel + Render
+7.1 Render — Backend Services
+7.1.1 Render Web Service (FastAPI)
+Setting
+Value
+Service Type
+Web Service
+Runtime
+Docker
+Dockerfile Path
+docker/minirag/Dockerfile
+Docker Context
+. (repo root)
+Start Command
+uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2
+Health Check Path
+/health
+Instance Type
+Standard (512MB RAM, 0.5 CPU) → scale to Pro as needed
+Auto-Deploy
+On push to main via Deploy Hook
+Secret Management
+Render Secret Files + Environment Variables dashboard
+7.1.2 Render Background Worker (Celery)
+Setting
+Value
+Service Type
+Background Worker
+Same Docker Image
+Yes — ghcr.io/.../backend:latest
+Start Command
+celery -A celery_app worker --loglevel=info --concurrency=4
+Env Vars
+Same as Web Service (share via Render Environment Group)
+7.1.3 Render Cron Job (Celery Beat)
+Start Command: celery -A celery_app beat --loglevel=info
+Schedule: Every 5 minutes (Render Cron schedule: */5 * * * *)
+7.1.4 Managed Database — Neon PostgreSQL
+Setting
+Value
+Provider
+Neon (neon.tech) — serverless Postgres
+Plan
+Launch ($19/mo) for persistent, production-grade storage
+Extensions
+Enable via Neon dashboard: Extensions → pgvector
+Connection Pooling
+Neon built-in PgBouncer — use pooled connection string in app
+Migrations
+Run alembic upgrade head as Render pre-deploy command
+Backups
+Neon automatic PITR (7 days on Launch plan)
+7.1.5 Upstash Redis
+Create Upstash Redis database (free tier: 10K commands/day; paid: $0.2/100K).
+Copy the TLS Redis URL (rediss://...) into Render env REDIS_URL.
+Set CELERY_RESULT_BACKEND to the same URL with /1 database suffix.
+7.1.6 CloudAMQP (RabbitMQ)
+Create CloudAMQP instance on Lemur plan (free: 1M messages/month).
+Copy AMQP URL into Render env CELERY_BROKER_URL.
+7.2 Vercel — Frontend (Next.js)
+Setting
+Value
+Framework Preset
+Next.js
+Root Directory
+frontend/
+Build Command
+npm run build
+Output Directory
+.next (auto-detected)
+Env Variables
+NEXT_PUBLIC_API_URL=https://your-app.onrender.com
+Domains
+Auto: your-app.vercel.app + custom domain via CNAME
+Preview Deploys
+Every PR gets a unique preview URL (Vercel default behaviour)
+frontend/Dockerfile (for local/staging parity)
+# Stage 1: Build
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+# Stage 2: Run
+FROM node:18-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+USER nextjs
+EXPOSE 3000
+CMD ["node", "server.js"]
+8. Missing Files — Creation Checklist
+File Path
+Status
+Priority
+Owner / Sprint
+src/requirements.txt
+MISSING
+CRITICAL
+Sprint 1, BE Lead
+frontend/package.json
+MISSING
+CRITICAL
+Sprint 1, FE Lead
+frontend/Dockerfile
+MISSING
+CRITICAL
+Sprint 1, DevOps
+src/.env.example
+MISSING
+CRITICAL
+Sprint 1, BE Lead
+docker/env/.env.example.app
+MISSING
+CRITICAL
+Sprint 1, DevOps
+docker/env/.env.example.postgres
+MISSING
+CRITICAL
+Sprint 1, DevOps
+docker/env/.env.example.grafana
+MISSING
+HIGH
+Sprint 2, DevOps
+docker/env/.env.rabbitmq
+MISSING
+CRITICAL
+Sprint 1, DevOps
+docker/init-scripts/01_pgvector.sql
+MISSING
+CRITICAL
+Sprint 1, BE Lead
+.github/workflows/ci-cd.yml (rewrite)
+BROKEN
+CRITICAL
+Sprint 1, DevOps
+src/tests/conftest.py
+MISSING
+CRITICAL
+Sprint 1, QA
+src/tests/test_auth.py
+MISSING
+HIGH
+Sprint 2, QA
+src/tests/test_nlp.py
+MISSING
+HIGH
+Sprint 2, QA
+pytest.ini
+MISSING
+CRITICAL
+Sprint 1, QA
+.pre-commit-config.yaml (gitleaks)
+MISSING
+HIGH
+Sprint 2, DevOps
+9. Implementation Plan — Sprints
+Sprint 1 — Deployment Unblocked (Days 1–5)
+Goal: every CI job passes green; app runs locally via docker-compose; staging environment is live on Render + Vercel.
+#
+Task
+Bug Fixed
+Owner
+Day
+1
+Create src/requirements.txt (pinned)
+BUG-001
+BE Lead
+Day 1
+2
+Create frontend/package.json + package-lock.json
+BUG-002
+FE Lead
+Day 1
+3
+Create frontend/Dockerfile (multi-stage)
+BUG-003
+DevOps
+Day 1
+4
+Create src/.env.example + all docker/env/.env.example.* files
+BUG-004
+BE Lead
+Day 1
+5
+Fix CORS middleware — env-driven allowlist
+BUG-005
+BE Lead
+Day 1
+6
+Fix Alembic migration path — standardise on /app/...
+BUG-006
+BE Lead
+Day 2
+7
+Add docker/init-scripts/01_pgvector.sql
+BUG-007
+BE Lead
+Day 2
+8
+Add wait-for-db loop to entrypoint.sh
+BUG-017
+DevOps
+Day 2
+9
+Create pytest.ini + src/tests/conftest.py + 5 smoke tests
+BUG-008
+QA
+Day 2
+10
+Add all Celery env vars to Settings model + .env.example
+BUG-009
+BE Lead
+Day 3
+11
+Add all LLM env vars to Settings model
+BUG-011
+BE Lead
+Day 3
+12
+Fix Flower config — read user+password from env
+BUG-012, BUG-026
+BE Lead
+Day 3
+13
+Rewrite .github/workflows/ci-cd.yml (Section 6)
+BUG-010
+DevOps
+Day 3
+14
+Provision Neon DB + enable pgvector extension
+BUG-007
+DevOps
+Day 4
+15
+Create Render services (Web, Worker, Beat) + connect env vars
+—
+DevOps
+Day 4
+16
+Connect Upstash Redis + CloudAMQP to Render
+—
+DevOps
+Day 4
+17
+Create Vercel project for frontend
+—
+FE Lead
+Day 4
+18
+Set NEXT_PUBLIC_API_URL on Vercel to Render backend URL
+—
+FE Lead
+Day 4
+19
+End-to-end smoke test: register → login → create project → chat
+—
+QA
+Day 5
+20
+Fix RabbitMQ healthcheck timing (interval: 10s, start_period: 30s)
+BUG-018
+DevOps
+Day 5
+Sprint 2 — Security & Reliability (Days 6–10)
+#
+Task
+Bug Fixed
+Owner
+Day
+21
+Fix JWT decoder — explicit algorithms=["HS256"]
+BUG-014
+BE Lead
+Day 6
+22
+Remove duplicate RateLimitMiddleware import
+BUG-013
+BE Lead
+Day 6
+23
+Implement per-user rate limiting in Redis
+BUG-015
+BE Lead
+Day 6
+24
+Enable Sentry with traces_sample_rate=0.2 + before_send PII filter
+BUG-016
+BE Lead
+Day 7
+25
+Add tenacity retry wrapper on all LLM calls
+BUG-025
+BE Lead
+Day 7
+26
+Replace setup_logging() with structlog JSON handler
+BUG-023
+BE Lead
+Day 7
+27
+Add Pydantic UUID validator on /nlp/index/answer/{project_id}
+BUG-024
+BE Lead
+Day 8
+28
+Validate Alembic env.py uses async engine
+BUG-027
+BE Lead
+Day 8
+29
+Define Celery beat_schedule for maintenance tasks
+BUG-028
+BE Lead
+Day 8
+30
+Add .pre-commit-config.yaml (gitleaks, black, flake8)
+—
+DevOps
+Day 9
+31
+Write test_auth.py: register, login, refresh, revoke
+BUG-008
+QA
+Day 9
+32
+Write test_nlp.py: RAG query with mocked LLM
+BUG-008
+QA
+Day 9
+33
+Load test: Locust 50 VU × 5 min — verify p95 < 3s
+—
+QA
+Day 10
+34
+Custom pgvector health check on Neon
+BUG-022
+DevOps
+Day 10
+35
+Pin Python to 3.11 in all contexts
+BUG-021
+DevOps
+Day 10
+10. Test Plan
+10.1 Unit Tests — src/tests/
+Test File
+Scenarios Covered
+Type
+Coverage Target
+test_auth.py
+Register, login (valid/invalid creds), JWT decode, refresh token
+Unit + Integration
+90%
+test_projects.py
+Create, list, delete project; quota enforcement
+Integration
+80%
+test_nlp.py
+RAG query (mocked LLM + pgvector), prompt injection block
+Integration
+80%
+test_rate_limit.py
+Free user hit limit, pro user bypass, Redis fail-open
+Unit
+95%
+test_health.py
+/health returns 200; /health/llm returns degraded when LLM down
+Integration
+100%
+test_celery_tasks.py
+file_processing task enqueues, result stored in backend
+Unit (mock)
+70%
+10.2 pytest.ini
+[pytest]
+asyncio_mode = auto
+testpaths = tests
+python_files = test_*.py
+python_classes = Test*
+python_functions = test_*
+addopts = -v --tb=short --strict-markers
+markers =
+  integration: mark test as requiring live DB/Redis
+  smoke: mark as minimal sanity check
+10.3 conftest.py Skeleton
+import pytest, asyncio
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from main import app
+TEST_DB = "postgresql+asyncpg://postgres:test@localhost:5432/grag_test"
+@pytest.fixture(scope="session")
+def event_loop(): return asyncio.new_event_loop()
+@pytest.fixture(scope="session")
+async def async_client():
+    async with AsyncClient(app=app, base_url="http://test") as client:
+        yield client
+@pytest.fixture(scope="session")
+async def db_session():
+    engine = create_async_engine(TEST_DB)
+    async with AsyncSession(engine) as session:
+        yield session
+11. Risk Register
+Risk
+Description
+Probability
+Impact
+Mitigation
+Neon cold-start
+Serverless Postgres may add 500–2000ms latency on first query after inactivity.
+Medium
+High
+Use pooled connection string; add connection warmup endpoint.
+Render free-tier sleep
+Free Render web services sleep after 15min inactivity, adding 30s cold start.
+High
+Medium
+Use paid Starter plan ($7/mo); add UptimeRobot ping.
+CloudAMQP msg loss
+Free Lemur plan has 1M msg/mo limit; overflow silently drops messages.
+Low
+High
+Monitor message count; upgrade to Little Lemur at 80% threshold.
+OpenAI rate limits
+GPT-4o-mini tier 1 has 500 RPM. Spike traffic can cause 429 cascades.
+Medium
+High
+tenacity retry + per-user rate limit + model fallback to gpt-3.5-turbo.
+Secret rotation
+Long-lived APP_SECRET_KEY invalidates all user sessions if rotated without migration.
+Low
+High
+Implement JWKS / key versioning before first public launch.
+12. Definition of Done
+12.1 Sprint 1 — Done When:
+All 10 CI pipeline jobs pass green on a push to main.
+docker-compose up in the docker/ directory starts all services without errors.
+Staging backend on Render responds to GET /health with HTTP 200.
+Staging frontend on Vercel loads without console errors.
+User can register, login, create a project, upload a PDF, and ask a question end-to-end.
+12.2 Sprint 2 — Done When:
+pytest suite passes with ≥70% line coverage reported in CI.
+Sentry dashboard receives at least one test error event.
+OWASP ZAP passive scan shows zero High-severity findings.
+Locust p95 latency for /api/v1/nlp/index/answer < 3 seconds under 50 VU.
+All 28 bugs in the catalogue are marked Resolved with corresponding PR linked.
+12.3 Production Go-Live Gate (Both Sprints Complete)
+Zero open CRITICAL or HIGH bugs in the issue tracker.
+ALLOWED_ORIGINS set to production Vercel domain only (no wildcard).
+All secrets stored in Render Secret Files; no plaintext secrets in repo.
+gitleaks pre-commit hook active on all developer machines.
+Render auto-deploy disabled for direct pushes; deploy requires CI green.
+13. Required GitHub Secrets
+Secret Name
+Value Source
+Used In
+VERCEL_TOKEN
+Vercel dashboard → Settings → Tokens
+deploy job
+VERCEL_ORG_ID
+Vercel dashboard → Settings → General
+deploy job
+VERCEL_PROJECT_ID
+Vercel project → Settings → General
+deploy job
+RENDER_DEPLOY_HOOK_BACKEND
+Render → service → Settings → Deploy Hooks
+deploy job
+RENDER_DEPLOY_HOOK_WORKER
+Render → worker service → Deploy Hooks
+deploy job
+BACKEND_URL
+https://your-app.onrender.com
+smoke test step
+GITHUB_TOKEN
+Auto-provided by GitHub Actions
+GHCR image push
+Render Environment Variables (set in Render Dashboard)
+Variable
+Notes
+DATABASE_URL
+Neon pooled connection string (postgresql+asyncpg://...)
+REDIS_URL
+Upstash TLS URL (rediss://...)
+CELERY_BROKER_URL
+CloudAMQP AMQP URL
+CELERY_RESULT_BACKEND
+Same as REDIS_URL with /1 suffix
+APP_SECRET_KEY
+Generate: openssl rand -hex 32
+ALLOWED_ORIGINS
+https://your-app.vercel.app
+OPENAI_API_KEY
+From platform.openai.com
+GENERATION_BACKEND
+openai
+GENERATION_MODEL_ID
+gpt-4o-mini
+EMBEDDING_BACKEND
+openai
+EMBEDDING_MODEL_ID
+text-embedding-3-small
+EMBEDDING_MODEL_SIZE
+1536
+SENTRY_DSN
+From sentry.io project settings
+LOG_LEVEL
+INFO
+RATE_LIMIT_PER_MINUTE_FREE
+20
+RATE_LIMIT_PER_MINUTE_PRO
+200
+FLOWER_USER
+admin
+FLOWER_PASSWORD
+Generate: openssl rand -hex 16
+14. Change Log & Sign-Off
+Version
+Date
+Author
+Summary
+1.0.0
+2026-05-12
+Team Lead
+Initial PRD — 28 bugs catalogued; Vercel+Render deployment plan; 2-sprint implementation roadmap.
+Approval
+Role
+Name
+Signature / Date
+Team Lead / Author
+________________
+Backend Lead
+________________
+Frontend Lead
+________________
+DevOps Engineer
+________________
+QA Lead
+________________

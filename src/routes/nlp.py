@@ -11,9 +11,10 @@ from tasks.data_indexing import index_data_content
 from models.db_schemes import User
 from security.quotas import check_message_quota
 
-import logging
+from uuid import UUID
+import structlog
 
-logger = logging.getLogger('uvicorn.error')
+logger = structlog.get_logger(__name__)
 
 nlp_router = APIRouter(
     prefix="/api/v1/nlp",
@@ -21,12 +22,12 @@ nlp_router = APIRouter(
 )
 
 @nlp_router.post("/index/push/{project_id}")
-async def index_project(request: Request, project_id: int, push_request: PushRequest,
+async def index_project(request: Request, project_id: UUID, push_request: PushRequest,
                         current_user: User = Depends(get_current_user),
                         project_repo: ProjectRepository = Depends(get_project_repo)):
 
     project = await project_repo.get_or_create(
-        project_id=project_id,
+        project_uuid=project_id,
         owner_id=current_user.user_id
     )
 
@@ -52,12 +53,12 @@ async def index_project(request: Request, project_id: int, push_request: PushReq
     
 
 @nlp_router.get("/index/info/{project_id}")
-async def get_project_index_info(request: Request, project_id: int,
+async def get_project_index_info(request: Request, project_id: UUID,
                                  current_user: User = Depends(get_current_user),
                                  project_repo: ProjectRepository = Depends(get_project_repo)):
     
     project = await project_repo.get_or_create(
-        project_id=project_id,
+        project_uuid=project_id,
         owner_id=current_user.user_id
     )
 
@@ -85,12 +86,12 @@ async def get_project_index_info(request: Request, project_id: int,
     )
 
 @nlp_router.post("/index/search/{project_id}")
-async def search_index(request: Request, project_id: int, search_request: SearchRequest,
+async def search_index(request: Request, project_id: UUID, search_request: SearchRequest,
                        current_user: User = Depends(get_current_user),
                        project_repo: ProjectRepository = Depends(get_project_repo)):
     
     project = await project_repo.get_or_create(
-        project_id=project_id,
+        project_uuid=project_id,
         owner_id=current_user.user_id
     )
 
@@ -127,7 +128,7 @@ async def search_index(request: Request, project_id: int, search_request: Search
     )
 
 @nlp_router.post("/index/answer/{project_id}")
-async def answer_rag(request: Request, project_id: int, search_request: SearchRequest,
+async def answer_rag(request: Request, project_id: UUID, search_request: SearchRequest,
                      current_user: User = Depends(get_current_user),
                      project_repo: ProjectRepository = Depends(get_project_repo),
                      quota_check: bool = Depends(check_message_quota)):
@@ -143,7 +144,7 @@ async def answer_rag(request: Request, project_id: int, search_request: SearchRe
     logger.info(f"[G-RAG] user_id={current_user.user_id} project_id={project_id} mode={mode_str}")
     
     project = await project_repo.get_or_create(
-        project_id=project_id,
+        project_uuid=project_id,
         owner_id=current_user.user_id
     )
 

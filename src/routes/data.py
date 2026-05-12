@@ -1,11 +1,13 @@
-from fastapi import FastAPI, APIRouter, Depends, UploadFile, status, Request
+from fastapi import APIRouter, Depends, UploadFile, status, Request
 from fastapi.responses import JSONResponse
 import os
-from helpers.config import get_settings, Settings
-from controllers import DataController, ProjectController, ProcessController
 import aiofiles
+from uuid import UUID
+import structlog
+
+from helpers.config import get_settings, Settings
+from controllers import DataController, ProjectController
 from models import ResponseSignal
-import logging
 from .schemes.data import ProcessRequest
 from security.authentication import get_current_user
 from domains.learning.repository import ProjectRepository
@@ -15,11 +17,9 @@ from models.db_schemes import Asset, User
 from models.enums.AssetTypeEnum import AssetTypeEnum
 from tasks.file_processing import process_project_files
 from tasks.process_workflow import process_and_push_workflow
-from security.quotas import check_message_quota, check_asset_quota
+from security.quotas import check_asset_quota
 
-# Logger setup
-
-logger = logging.getLogger('uvicorn.error')
+logger = structlog.get_logger(__name__)
 
 data_router = APIRouter(
     prefix="/api/v1/data",
@@ -27,7 +27,7 @@ data_router = APIRouter(
 )
 
 @data_router.post("/upload/{project_id}")
-async def upload_data(request: Request, project_id: int, file: UploadFile,
+async def upload_data(request: Request, project_id: UUID, file: UploadFile,
                       app_settings: Settings = Depends(get_settings),
                       current_user: User = Depends(get_current_user),
                       project_repo: ProjectRepository = Depends(get_project_repo),
@@ -35,7 +35,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
                       quota_check: bool = Depends(check_asset_quota)):
         
     project = await project_repo.get_or_create(
-        project_id=project_id,
+        project_uuid=project_id,
         owner_id=current_user.user_id
     )
 
@@ -49,7 +49,6 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
 
     # validate the file properties
     data_controller = DataController()
-
     is_valid, result_signal = data_controller.validate_uploaded_file(file=file)
 
     if not is_valid:
@@ -60,10 +59,9 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
             }
         )
 
-    project_dir_path = ProjectController().get_project_path(project_id=project_id)
     file_path, file_id = data_controller.generate_unique_filepath(
         orig_file_name=file.filename,
-        project_id=project_id
+        project_id=str(project_id)
     )
 
     try:
@@ -71,9 +69,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
             while chunk := await file.read(app_settings.FILE_DEFAULT_CHUNK_SIZE):
                 await f.write(chunk)
     except Exception as e:
-
-        logger.error(f"Error while uploading file: {e}")
-
+        logger.error("Error while uploading file", error=str(e))
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
@@ -91,7 +87,7 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
 
     asset_record = await asset_repo.save(asset=asset_resource)
 
-    logger.info(f"[G-RAG] Document uploaded: user={current_user.user_id}, project={project.project_id}, filename={file.filename}")
+    logger.info("Document uploaded", user=current_user.user_id, project=project.project_id, filename=file.filename)
 
     # Automatically trigger processing and indexing workflow
     process_and_push_workflow.delay(
@@ -106,16 +102,16 @@ async def upload_data(request: Request, project_id: int, file: UploadFile,
             content={
                 "signal": ResponseSignal.FILE_UPLOAD_SUCCESS.value,
                 "file_id": str(asset_record.asset_id),
-                "project_id": project.project_id
+                "project_id": str(project.project_uuid)
             }
         )
 
 @data_router.post("/process/{project_id}")
-async def process_endpoint(request: Request, project_id: int, process_request: ProcessRequest,
+async def process_endpoint(request: Request, project_id: UUID, process_request: ProcessRequest,
                            current_user: User = Depends(get_current_user),
                            project_repo: ProjectRepository = Depends(get_project_repo)):
 
-    project = await project_repo.get_or_create(project_id=project_id, owner_id=current_user.user_id)
+    project = await project_repo.get_or_create(project_uuid=project_id, owner_id=current_user.user_id)
     
     if not project:
         return JSONResponse(
@@ -125,16 +121,12 @@ async def process_endpoint(request: Request, project_id: int, process_request: P
             }
         )
 
-    chunk_size = process_request.chunk_size
-    overlap_size = process_request.overlap_size
-    do_reset = process_request.do_reset
-
     task = process_project_files.delay(
-        project_id=project_id,
+        project_id=project.project_id,
         file_id=process_request.file_id,
-        chunk_size=chunk_size,
-        overlap_size=overlap_size,
-        do_reset=do_reset,
+        chunk_size=process_request.chunk_size,
+        overlap_size=process_request.overlap_size,
+        do_reset=process_request.do_reset,
     )
 
     return JSONResponse(
@@ -145,11 +137,11 @@ async def process_endpoint(request: Request, project_id: int, process_request: P
     )
 
 @data_router.post("/process-and-push/{project_id}")
-async def process_and_push_endpoint(request: Request, project_id: int, process_request: ProcessRequest,
+async def process_and_push_endpoint(request: Request, project_id: UUID, process_request: ProcessRequest,
                                     current_user: User = Depends(get_current_user),
                                     project_repo: ProjectRepository = Depends(get_project_repo)):
 
-    project = await project_repo.get_or_create(project_id=project_id, owner_id=current_user.user_id)
+    project = await project_repo.get_or_create(project_uuid=project_id, owner_id=current_user.user_id)
     
     if not project:
          return JSONResponse(
@@ -159,16 +151,12 @@ async def process_and_push_endpoint(request: Request, project_id: int, process_r
             }
         )
 
-    chunk_size = process_request.chunk_size
-    overlap_size = process_request.overlap_size
-    do_reset = process_request.do_reset
-
     workflow_task = process_and_push_workflow.delay(
-        project_id=project_id,
+        project_id=project.project_id,
         file_id=process_request.file_id,
-        chunk_size=chunk_size,
-        overlap_size=overlap_size,
-        do_reset=do_reset,
+        chunk_size=process_request.chunk_size,
+        overlap_size=process_request.overlap_size,
+        do_reset=process_request.do_reset,
     )
 
     return JSONResponse(

@@ -2,6 +2,7 @@ from celery_app import celery_app
 from core.container import container
 from helpers.config import get_settings
 import asyncio
+import structlog
 from models.ProjectModel import ProjectModel
 from models.ChunkModel import ChunkModel
 from models.AssetModel import AssetModel
@@ -9,19 +10,17 @@ from models.db_schemes import DataChunk
 from models import ResponseSignal
 from models.enums.AssetTypeEnum import AssetTypeEnum
 from controllers import ProcessController
-from controllers import NLPController
 from utils.idempotency_manager import IdempotencyManager
 
-import logging
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 @celery_app.task(
-                 bind=True, name="tasks.file_processing.process_project_files",
-                 autoretry_for=(Exception,),
-                 retry_kwargs={'max_retries': 3, 'countdown': 60}
-                )
+    bind=True, name="tasks.file_processing.process_project_files",
+    autoretry_for=(Exception,),
+    retry_kwargs={'max_retries': 3, 'countdown': 60}
+)
 def process_project_files(self, project_id: int, 
-                          file_id: int, chunk_size: int,
+                          file_id: str, chunk_size: int,
                           overlap_size: int, do_reset: int):
 
     return asyncio.run(
@@ -29,43 +28,15 @@ def process_project_files(self, project_id: int,
                                overlap_size, do_reset)
     )
 
-
 async def _process_project_files(task_instance, project_id: int, 
-                                 file_id: int, chunk_size: int,
+                                 file_id: str, chunk_size: int,
                                  overlap_size: int, do_reset: int):
 
-    
-    db_engine, vectordb_client = None, None
-    
     try:
-        # Use container for dependencies
-        db_engine = container.db_engine
         db_client = container.db_session_factory
-        llm_provider_factory = container.llm_provider_factory
-        vectordb_provider_factory = container.vectordb_provider_factory
-        
+        db_engine = container.db_engine
         settings = container.settings
-
-        # generation client
-        generation_client = llm_provider_factory.create(provider=settings.GENERATION_BACKEND)
-        generation_client.set_generation_model(model_id = settings.GENERATION_MODEL_ID)
-
-        # embedding client
-        embedding_client = llm_provider_factory.create(provider=settings.EMBEDDING_BACKEND)
-        embedding_client.set_embedding_model(model_id=settings.EMBEDDING_MODEL_ID,
-                                                embedding_size=settings.EMBEDDING_MODEL_SIZE)
-        
-        # vector db client
-        vectordb_client = vectordb_provider_factory.create(
-            provider=settings.VECTOR_DB_BACKEND
-        )
-        await vectordb_client.connect()
-
-        from stores.llm.templates.template_parser import TemplateParser
-        template_parser = TemplateParser(
-            language=settings.PRIMARY_LANG,
-            default_language=settings.DEFAULT_LANG,
-        )
+        tutor_service = container.tutor_service
 
         # Create idempotency manager
         idempotency_manager = IdempotencyManager(db_client, db_engine)
@@ -81,9 +52,7 @@ async def _process_project_files(task_instance, project_id: int,
         
         task_name = "tasks.file_processing.process_project_files"
 
-        settings = get_settings()
-
-        # Check if task should execute (600 seconds = 10 minutes timeout)
+        # Check if task should execute
         should_execute, existing_task = await idempotency_manager.should_execute_task(
             task_name=task_name,
             task_args=task_args,
@@ -92,50 +61,32 @@ async def _process_project_files(task_instance, project_id: int,
         )
 
         if not should_execute:
-            logger.warning(f"Can not handle th task | status: {existing_task.status}")
+            logger.warning("Task already executing or completed", status=existing_task.status)
             return existing_task.result
 
         task_record = None
         if existing_task:
-            # Update existing task with new celery task ID
             await idempotency_manager.update_task_status(
                 execution_id=existing_task.execution_id,
                 status='PENDING'
             )
             task_record = existing_task
         else:
-            # Create new task record
             task_record = await idempotency_manager.create_task_record(
                 task_name=task_name,
                 task_args=task_args,
                 celery_task_id=task_instance.request.id
             )
         
-        # Update status to STARTED
         await idempotency_manager.update_task_status(
             execution_id=task_record.execution_id,
             status='STARTED'
         )
 
+        project_model = await ProjectModel.create_instance(db_client=db_client)
+        project = await project_model.get_project_or_create_one(project_id=project_id)
 
-        project_model = await ProjectModel.create_instance(
-            db_client=db_client
-        )
-
-        project = await project_model.get_project_or_create_one(
-            project_id=project_id
-        )
-
-        nlp_controller = NLPController(
-            vectordb_client=vectordb_client,
-            generation_client=generation_client,
-            embedding_client=embedding_client,
-            template_parser=template_parser,
-        )
-
-        asset_model = await AssetModel.create_instance(
-                db_client=db_client
-            )
+        asset_model = await AssetModel.create_instance(db_client=db_client)
 
         project_files_ids = {}
         if file_id:
@@ -145,82 +96,45 @@ async def _process_project_files(task_instance, project_id: int,
             )
 
             if asset_record is None:
-                task_instance.update_state(
-                    state="FAILURE",
-                    meta={
-                        "signal": ResponseSignal.FILE_ID_ERROR.value,
-                    }
-                )
-
-                # Update task status to FAILURE
+                task_instance.update_state(state="FAILURE", meta={"signal": ResponseSignal.FILE_ID_ERROR.value})
                 await idempotency_manager.update_task_status(
                     execution_id=task_record.execution_id,
                     status='FAILURE',
                     result={"signal": ResponseSignal.FILE_ID_ERROR.value}
                 )
-
                 raise Exception(f"No assets for file: {file_id}")
 
-            project_files_ids = {
-                asset_record.asset_id: asset_record.asset_name
-            }
-        
+            project_files_ids = {asset_record.asset_id: asset_record.asset_name}
         else:
-            
-
             project_files = await asset_model.get_all_project_assets(
                 asset_project_id=project.project_id,
                 asset_type=AssetTypeEnum.FILE.value,
             )
+            project_files_ids = {record.asset_id: record.asset_name for record in project_files}
 
-            project_files_ids = {
-                record.asset_id: record.asset_name
-                for record in project_files
-            }
-
-        if len(project_files_ids) == 0:
-
-            task_instance.update_state(
-                state="FAILURE",
-                meta={
-                    "signal": ResponseSignal.NO_FILES_ERROR.value,
-                }
-            )
-
-            # Update task status to FAILURE
+        if not project_files_ids:
+            task_instance.update_state(state="FAILURE", meta={"signal": ResponseSignal.NO_FILES_ERROR.value})
             await idempotency_manager.update_task_status(
                 execution_id=task_record.execution_id,
                 status='FAILURE',
-                result={"signal": ResponseSignal.NO_FILES_ERROR.value,}
+                result={"signal": ResponseSignal.NO_FILES_ERROR.value}
             )
-
             raise Exception(f"No files found for project_id: {project.project_id}")
         
         process_controller = ProcessController(project_id=project_id)
+        chunk_model = await ChunkModel.create_instance(db_client=db_client)
+
+        if do_reset == 1:
+            await tutor_service.reset_collection(project_id=project.project_id)
+            await chunk_model.delete_chunks_by_project_id(project_id=project.project_id)
 
         no_records = 0
         no_files = 0
 
-        chunk_model = await ChunkModel.create_instance(
-                            db_client=db_client
-                        )
-
-        if do_reset == 1:
-            # delete associated vectors collection
-            collection_name = nlp_controller.create_collection_name(project_id=project.project_id)
-            _ = await vectordb_client.delete_collection(collection_name=collection_name)
-
-            # delete associated chunks
-            _ = await chunk_model.delete_chunks_by_project_id(
-                project_id=project.project_id
-            )
-
         for asset_id, file_id in project_files_ids.items():
-
             file_content = process_controller.get_file_content(file_id=file_id)
-
             if file_content is None:
-                logger.error(f"Error while processing file: {file_id}")
+                logger.error("Error while processing file", file_id=file_id)
                 continue
 
             file_chunks = process_controller.process_file_content(
@@ -230,10 +144,9 @@ async def _process_project_files(task_instance, project_id: int,
                 overlap_size=overlap_size
             )
 
-            if file_chunks is None or len(file_chunks) == 0:
-                
-                logger.error(f"No chunks for file_id: {file_id}")
-                pass
+            if not file_chunks:
+                logger.error("No chunks generated for file", file_id=file_id)
+                continue
 
             file_chunks_records = [
                 DataChunk(
@@ -249,29 +162,21 @@ async def _process_project_files(task_instance, project_id: int,
             no_records += await chunk_model.insert_many_chunks(chunks=file_chunks_records)
             no_files += 1
 
-        task_instance.update_state(
-            state="SUCCESS",
-            meta={
-                "signal": ResponseSignal.PROCESSING_SUCCESS.value,
-            }
-        )
-
+        task_instance.update_state(state="SUCCESS", meta={"signal": ResponseSignal.PROCESSING_SUCCESS.value})
         await idempotency_manager.update_task_status(
             execution_id=task_record.execution_id,
             status='SUCCESS',
             result={"signal": ResponseSignal.PROCESSING_SUCCESS.value}
         )
 
-        logger.warning(f"inserted_chunks: {no_records}")
-
         return {
-                    "signal": ResponseSignal.PROCESSING_SUCCESS.value,
-                    "inserted_chunks": no_records,
-                    "processed_files": no_files,
-                    "project_id": project_id,
-                    "do_reset": do_reset
-                }
+            "signal": ResponseSignal.PROCESSING_SUCCESS.value,
+            "inserted_chunks": no_records,
+            "processed_files": no_files,
+            "project_id": project_id,
+            "do_reset": do_reset
+        }
     
     except Exception as e:
-        logger.error(f"Task failed: {str(e)}")
+        logger.error("Task failed", error=str(e))
         raise

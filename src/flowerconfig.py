@@ -1,12 +1,17 @@
-from dotenv import dotenv_values
-config = dotenv_values(".env")
+import os
 
 # Flower configuration
 port = 5555
 max_tasks = 10000
-# db = 'flower.db'  # SQLite database for persistent storage
 auto_refresh = True
 
-# Authentication (optional)
-basic_auth = [f'admin:{config["CELERY_FLOWER_PASSWORD"]}']
+# Authentication
+flower_user = os.environ.get("FLOWER_USER", "admin")
+flower_password = os.environ.get("FLOWER_PASSWORD")
 
+if flower_password:
+    basic_auth = [f"{flower_user}:{flower_password}"]
+else:
+    # If no password is set, we might want to warn or fail, but per PRD we should read from env.
+    # In production, this should be mandatory.
+    pass

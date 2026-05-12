@@ -8,9 +8,9 @@ from infrastructure.llm.async_openai_provider import AsyncOpenAIProvider
 from stores.llm.templates.template_parser import TemplateParser
 from domains.tutor.service import TutorService
 from stores.llm.semantic_cache import SemanticCache
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class Container:
     """Dependency Injection Container - Singleton pattern."""
@@ -30,12 +30,7 @@ class Container:
         self.settings = get_settings()
         
         # Database Engine (Async)
-        postgres_conn = (
-            f"postgresql+asyncpg://{self.settings.POSTGRES_USERNAME}:"
-            f"{self.settings.POSTGRES_PASSWORD.get_secret_value()}@"
-            f"{self.settings.POSTGRES_HOST}:{self.settings.POSTGRES_PORT}/"
-            f"{self.settings.POSTGRES_MAIN_DATABASE}"
-        )
+        postgres_conn = self.settings.DATABASE_URL
         self.db_engine = create_async_engine(
             postgres_conn, 
             pool_pre_ping=True,
@@ -47,9 +42,8 @@ class Container:
         )
         
         # Redis Client (Async)
-        # Parse host/port from celery backend if possible, or use defaults
         self.redis_client = redis.from_url(
-            self.settings.CELERY_RESULT_BACKEND,
+            self.settings.REDIS_URL,
             decode_responses=True
         )
         
@@ -70,13 +64,13 @@ class Container:
         )
         
         # Guard: Validate OpenAI models if using OpenAI backend
-        if self.settings.GENERATION_BACKEND == "OPENAI":
-            gen_model = self.settings.OPENAI_CHAT_MODEL or self.settings.GENERATION_MODEL_ID
+        if self.settings.GENERATION_BACKEND == "openai":
+            gen_model = self.settings.GENERATION_MODEL_ID
             self.async_llm_provider.set_generation_model(gen_model)
             logger.info(f"LLM Generation Provider: OpenAI | Model: {gen_model}")
             
-        if self.settings.EMBEDDING_BACKEND == "OPENAI":
-            embed_model = self.settings.OPENAI_EMBEDDING_MODEL or self.settings.EMBEDDING_MODEL_ID
+        if self.settings.EMBEDDING_BACKEND == "openai":
+            embed_model = self.settings.EMBEDDING_MODEL_ID
             self.async_llm_provider.set_embedding_model(
                 embed_model,
                 self.settings.EMBEDDING_MODEL_SIZE

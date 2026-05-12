@@ -7,9 +7,10 @@ from models.db_schemes import User, Project, Asset
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime
-import logging
+from uuid import UUID
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 projects_router = APIRouter(
     prefix="/api/v1/projects",
@@ -21,7 +22,7 @@ class ProjectCreate(BaseModel):
     project_description: Optional[str] = ""
 
 class ProjectResponse(BaseModel):
-    project_id: int
+    project_id: UUID
     project_name: str
     project_description: Optional[str]
     asset_count: int
@@ -42,6 +43,7 @@ async def list_projects(
     result = await db.execute(
         select(
             Project.project_id,
+            Project.project_uuid,
             Project.project_name,
             Project.project_description,
             Project.created_at,
@@ -57,7 +59,7 @@ async def list_projects(
     
     return [
         {
-            "project_id": row.project_id,
+            "project_id": row.project_uuid,
             "project_name": row.project_name or f"Projekt {row.project_id}",
             "project_description": row.project_description or "",
             "asset_count": row.asset_count,
@@ -87,7 +89,7 @@ async def create_project(
     logger.info(f"[Projects] Created project_id={new_project.project_id} for user_id={current_user.user_id}")
     
     return {
-        "project_id": new_project.project_id,
+        "project_id": new_project.project_uuid,
         "project_name": new_project.project_name,
         "project_description": new_project.project_description,
         "asset_count": 0,
@@ -96,7 +98,7 @@ async def create_project(
 
 @projects_router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
-    project_id: int,
+    project_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -106,13 +108,14 @@ async def get_project(
     result = await db.execute(
         select(
             Project.project_id,
+            Project.project_uuid,
             Project.project_name,
             Project.project_description,
             Project.created_at,
             func.count(Asset.asset_id).label("asset_count")
         )
         .outerjoin(Asset, Asset.asset_project_id == Project.project_id)
-        .where(Project.project_id == project_id)
+        .where(Project.project_uuid == project_id)
         .where(Project.owner_id == current_user.user_id)
         .group_by(Project.project_id)
     )
@@ -126,7 +129,7 @@ async def get_project(
         )
     
     return {
-        "project_id": row.project_id,
+        "project_id": row.project_uuid,
         "project_name": row.project_name or f"Projekt {row.project_id}",
         "project_description": row.project_description or "",
         "asset_count": row.asset_count,
@@ -135,7 +138,7 @@ async def get_project(
 
 @projects_router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_project(
-    project_id: int,
+    project_id: UUID,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -144,7 +147,7 @@ async def delete_project(
     """
     result = await db.execute(
         select(Project)
-        .where(Project.project_id == project_id)
+        .where(Project.project_uuid == project_id)
         .where(Project.owner_id == current_user.user_id)
     )
     project = result.scalars().first()

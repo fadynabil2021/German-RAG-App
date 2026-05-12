@@ -6,9 +6,9 @@ from typing import List, Dict, Any
 from domains.tutor.interfaces import IRAGService, TutoringMode
 from infrastructure.llm.async_openai_provider import AsyncOpenAIProvider
 from stores.llm.LLMEnums import DocumentTypeEnum
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 class TutorService(IRAGService):
     """Production RAG service with async LLM calls."""

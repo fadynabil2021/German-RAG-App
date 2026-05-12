@@ -16,18 +16,33 @@ logger = setup_logging()
 
 app = FastAPI()
 
-# Integrated Error Tracking (e.g. Sentry)
-# if os.getenv("SENTRY_DSN"):
-#     import sentry_sdk
-#     sentry_sdk.init(dsn=os.getenv("SENTRY_DSN"), traces_sample_rate=1.0)
+# Integrated Error Tracking (Sentry)
+if container.settings.SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.fastapi import FastApiIntegration
+
+    def before_send(event, hint):
+        # Strip PII (e.g., user email, passwords)
+        if "request" in event and "headers" in event["request"]:
+            event["request"]["headers"].pop("Authorization", None)
+            event["request"]["headers"].pop("Cookie", None)
+        return event
+
+    sentry_sdk.init(
+        dsn=container.settings.SENTRY_DSN,
+        traces_sample_rate=0.2,
+        before_send=before_send,
+        integrations=[FastApiIntegration()]
+    )
 
 # Add CORS Middleware
+allowed = container.settings.ALLOWED_ORIGINS.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, replace with specific frontend URL
+    allow_origins=[o.strip() for o in allowed],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 # Add Rate Limiting Middleware

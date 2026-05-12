@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_process_init
 from core.container import container
 
@@ -59,7 +60,7 @@ celery_app.conf.update(
     beat_schedule={
         'cleanup-old-task-records': {
             'task': "tasks.maintenance.clean_celery_executions_table",
-            'schedule': 10,
+            'schedule': crontab(hour=3, minute=0), # Daily at 3 AM
             'args': ()
         }
     },

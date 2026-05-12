@@ -8,6 +8,8 @@ from stores.llm.LLMEnums import OpenAIEnums, DocumentTypeEnum
 from helpers.config import Settings
 from utils.metrics import LLM_TOKEN_USAGE, LLM_ESTIMATED_COST
 from stores.llm.semantic_cache import SemanticCache
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from openai import RateLimitError, APIConnectionError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,11 @@ class AsyncOpenAIProvider:
             return text[:max_length]
         return text
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((RateLimitError, APIConnectionError))
+    )
     async def generate_text(
         self,
         prompt: str,
@@ -107,6 +114,11 @@ class AsyncOpenAIProvider:
             logger.error(f"Error generating text: {e}")
             return None
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((RateLimitError, APIConnectionError))
+    )
     async def embed_text(self, text: Union[str, list], document_type: str = None) -> list:
         """
         Generate embeddings using async OpenAI API.

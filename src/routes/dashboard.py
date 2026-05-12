@@ -5,9 +5,9 @@ from datetime import datetime, timedelta
 from domains.shared.dependencies import get_db
 from security.authentication import get_current_user
 from models.db_schemes import User, Message, Project
-import logging
+import structlog
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 dashboard_router = APIRouter(
     prefix="/api/v1/dashboard",

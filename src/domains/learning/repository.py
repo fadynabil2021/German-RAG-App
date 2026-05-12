@@ -36,15 +36,15 @@ class ProjectRepository(BaseRepository[Project]):
         result = await self.session.execute(select(Project).offset(skip).limit(limit))
         return list(result.scalars().all())
 
-    async def get_or_create(self, project_id: int, owner_id: int = None) -> Optional[Project]:
-        project = await self.get_by_id(project_id)
+    async def get_or_create(self, project_uuid: str, owner_id: int = None) -> Optional[Project]:
+        project = await self.get_by_uuid(project_uuid)
         if project:
             if owner_id is not None and project.owner_id != owner_id:
                 return None # Ownership mismatch
             return project
         
         if owner_id is not None:
-            new_project = Project(project_id=project_id, owner_id=owner_id)
+            new_project = Project(project_uuid=project_uuid, owner_id=owner_id)
             return await self.save(new_project)
         
         return None
